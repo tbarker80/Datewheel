@@ -181,6 +181,7 @@ export default function DateWheel({
 
   const dragTargetRef = React.useRef<'start' | 'end' | number>('end');
   const isDraggingRef = React.useRef(false);
+  const [activeDot, setActiveDot] = React.useState<'start' | 'end' | number | null>(null);
 
   function dist(ax: number, ay: number, bx: number, by: number) {
     return Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
@@ -236,12 +237,14 @@ export default function DateWheel({
 
     if (minDist === closestBoundaryDist && closestBoundaryIndex >= 0) {
       dragTargetRef.current = closestBoundaryIndex;
-      // Tell parent to snapshot tasks NOW before any changes
+      setActiveDot(closestBoundaryIndex);
       onBoundaryDragStart(closestBoundaryIndex);
     } else if (minDist === distToStart) {
       dragTargetRef.current = 'start';
+      setActiveDot('start');
     } else {
       dragTargetRef.current = 'end';
+      setActiveDot('end');
     }
     isDraggingRef.current = true;
   }
@@ -284,6 +287,7 @@ export default function DateWheel({
 
   function handleDragEnd() {
     isDraggingRef.current = false;
+    setActiveDot(null);
   }
 
   const ringGesture = Gesture.Pan()
@@ -367,22 +371,53 @@ export default function DateWheel({
 
           <Circle cx={R} cy={R} r={R - 80} fill="#0F1923" stroke="#2E7DBC" strokeWidth={1.5}/>
 
-          {tasks.map((task) => {
+          {/* Task boundary dots */}
+          {tasks.map((task, i) => {
             const te = new Date(task.endDate);
             const tEndDay = getDayOfYear(te);
             const tEndAngle = dayToAngle(tEndDay);
             const tEndXY = angleToXY(tEndAngle, RING_RADIUS);
+            const isActive = activeDot === i;
             return (
-              <Circle key={task.id} cx={tEndXY.x} cy={tEndXY.y} r={8}
-                fill={task.color} stroke="#FFFFFF" strokeWidth={1.5} strokeOpacity={0.4}/>
+              <React.Fragment key={task.id}>
+                {isActive && (
+                  <Circle
+                    cx={tEndXY.x} cy={tEndXY.y} r={20}
+                    fill={task.color} fillOpacity={0.2}
+                  />
+                )}
+                <Circle
+                  cx={tEndXY.x} cy={tEndXY.y}
+                  r={isActive ? 13 : 8}
+                  fill={task.color}
+                  stroke="#FFFFFF"
+                  strokeWidth={isActive ? 2.5 : 1.5}
+                  strokeOpacity={isActive ? 0.9 : 0.4}
+                />
+              </React.Fragment>
             );
           })}
 
-          <Circle cx={startXY.x} cy={startXY.y} r={10} fill="#2E9BFF"/>
-          <Circle cx={startXY.x} cy={startXY.y} r={10} fill="none" stroke="#FFFFFF" strokeWidth={1.5} strokeOpacity={0.4}/>
+          {/* Start dot */}
+          {activeDot === 'start' && (
+            <Circle cx={startXY.x} cy={startXY.y} r={22} fill="#2E9BFF" fillOpacity={0.2}/>
+          )}
+          <Circle cx={startXY.x} cy={startXY.y} r={activeDot === 'start' ? 15 : 10} fill="#2E9BFF"/>
+          <Circle cx={startXY.x} cy={startXY.y} r={activeDot === 'start' ? 15 : 10}
+            fill="none" stroke="#FFFFFF"
+            strokeWidth={activeDot === 'start' ? 2.5 : 1.5}
+            strokeOpacity={activeDot === 'start' ? 0.9 : 0.4}/>
 
-          <Circle cx={endXY.x} cy={endXY.y} r={12} fill="#F0A500" fillOpacity={0.9}/>
-          <Circle cx={endXY.x} cy={endXY.y} r={12} fill="none" stroke="#FFFFFF" strokeWidth={1.5} strokeOpacity={0.4}/>
+          {/* End dot */}
+          {activeDot === 'end' && (
+            <Circle cx={endXY.x} cy={endXY.y} r={24} fill="#F0A500" fillOpacity={0.2}/>
+          )}
+          <Circle cx={endXY.x} cy={endXY.y} r={activeDot === 'end' ? 17 : 12}
+            fill="#F0A500" fillOpacity={0.9}/>
+          <Circle cx={endXY.x} cy={endXY.y} r={activeDot === 'end' ? 17 : 12}
+            fill="none" stroke="#FFFFFF"
+            strokeWidth={activeDot === 'end' ? 2.5 : 1.5}
+            strokeOpacity={activeDot === 'end' ? 0.9 : 0.4}/>
 
         </Svg>
 

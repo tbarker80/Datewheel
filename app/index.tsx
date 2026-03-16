@@ -1,4 +1,5 @@
 import DateWheel, { Task, TASK_COLORS } from "@/components/datewheel";
+import GanttChart from "@/components/GanttChart";
 import { businessDaysWithHolidays } from "@/components/holidays";
 import SettingsModal, { AppSettings } from "@/components/SettingsModal";
 import TaskNameModal from "@/components/TaskNameModal";
@@ -110,6 +111,7 @@ export default function Index() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [currentTaskName, setCurrentTaskName] = useState("Current Task");
+  const [ganttVisible, setGanttVisible] = useState(false);
 
   // Snapshot of tasks at drag start — prevents compounding
   const taskSnapshotRef = useRef<Task[]>([]);
@@ -685,6 +687,17 @@ export default function Index() {
           <Text style={[styles.savesHint, { color: theme.border }]}>
             Tap name to rename · Hold to delete
           </Text>
+
+          {/* Gantt Chart Button */}
+          <TouchableOpacity
+            style={[styles.ganttBtn, { borderColor: theme.border }]}
+            onPress={() => setGanttVisible(true)}
+          >
+            <Text style={styles.ganttBtnIcon}>📊</Text>
+            <Text style={[styles.ganttBtnText, { color: theme.muted }]}>
+              View Gantt Chart
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Date Picker */}
@@ -731,7 +744,18 @@ export default function Index() {
         onClose={() => setTemplatesVisible(false)}
         onLoad={handleLoadTemplate}
       />
-
+      {/* Gantt Chart */}
+      <GanttChart
+        visible={ganttVisible}
+        onClose={() => setGanttVisible(false)}
+        tasks={tasks}
+        currentTaskName={currentTaskName}
+        startDate={startDate}
+        endDate={endDate}
+        duration={duration}
+        unit={unit}
+        currentTaskColor={currentTaskColor}
+      />
     </SafeAreaView>
   );
 }
@@ -1056,5 +1080,23 @@ const styles = StyleSheet.create({
   cancelTemplateBtnText: {
     fontSize: 14,
     color: "#5A7A96",
+  },
+  ganttBtn: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 8,
+  },
+  ganttBtnIcon: {
+    fontSize: 16,
+  },
+  ganttBtnText: {
+    fontSize: 14,
+    fontWeight: "500",
   },
 });
