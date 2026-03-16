@@ -74,6 +74,7 @@ function calcTotalDuration(tasks: Task[], currentEnd: Date, unit: string, holida
   const firstStart = new Date(tasks[0].startDate);
   return calcDuration(firstStart, currentEnd, unit, holidayCountry);
 }
+
 async function saveProject(
   name: string,
   tasks: Task[],
@@ -127,11 +128,15 @@ export default function Index() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [currentTaskName, setCurrentTaskName] = useState("Current Task");
   const [isDragging, setIsDragging] = useState(false);
+  const [dragDisplayDates, setDragDisplayDates] = useState<{
+    start: Date;
+    end: Date;
+    label: string;
+  } | null>(null);
 
   const tasksRef = useRef<Task[]>([]);
   const startDateRef = useRef<Date>(today);
   const endDateRef = useRef<Date>(future);
-
   const taskSnapshotRef = useRef<Task[]>([]);
   const activeStartSnapshotRef = useRef<string>("");
   const activeEndSnapshotRef = useRef<string>("");
@@ -143,8 +148,10 @@ export default function Index() {
 
   const timelineStart = tasks.length > 0 ? new Date(tasks[0].startDate) : startDate;
   const timelineEnd = endDate;
-  const displayStart = isDragging ? startDate : timelineStart;
-  const displayEnd = isDragging ? endDate : timelineEnd;
+
+  const activeTaskStart = isDragging && dragDisplayDates ? dragDisplayDates.start : startDate;
+  const activeTaskEnd = isDragging && dragDisplayDates ? dragDisplayDates.end : endDate;
+  const activeTaskLabel = isDragging && dragDisplayDates ? dragDisplayDates.label : currentTaskName;
 
   useEffect(() => {
     loadSettings();
@@ -207,18 +214,38 @@ export default function Index() {
 
   function handleBoundaryDragStart(taskIndex: number) {
     takeSnapshot();
+    const task = tasksRef.current[taskIndex];
+    if (task) {
+      setIsDragging(true);
+      setDragDisplayDates({
+        start: new Date(task.startDate),
+        end: new Date(task.endDate),
+        label: task.name,
+      });
+    }
   }
 
   function handleEndDragStart() {
     takeSnapshot();
+    setIsDragging(true);
+    setDragDisplayDates({
+      start: startDateRef.current,
+      end: endDateRef.current,
+      label: currentTaskName,
+    });
   }
 
   function handleDragEnd() {
     takeSnapshot();
+    setIsDragging(false);
+    setDragDisplayDates(null);
   }
 
   function handleDragActive(dragging: boolean) {
-    setIsDragging(dragging);
+    if (!dragging) {
+      setIsDragging(false);
+      setDragDisplayDates(null);
+    }
   }
 
   async function handleBoundaryChange(taskIndex: number, newDate: Date) {
@@ -251,6 +278,15 @@ export default function Index() {
 
     setTasksSync(updated);
     await AsyncStorage.setItem("tasks", JSON.stringify(updated));
+
+    const updatedTask = updated[taskIndex];
+    if (updatedTask) {
+      setDragDisplayDates({
+        start: new Date(updatedTask.startDate),
+        end: new Date(updatedTask.endDate),
+        label: updatedTask.name,
+      });
+    }
 
     const snapActiveStart = new Date(activeStartSnapshotRef.current);
     const snapActiveEnd = new Date(activeEndSnapshotRef.current);
@@ -285,44 +321,28 @@ export default function Index() {
     setEndDateSync(newActiveEnd);
   }
 
-  // Save as project — preserves actual dates
   async function handleSaveAsProject() {
-    console.log("saveProject type:", typeof saveProject);
     const name = saveName.trim() || `Project ${new Date().toLocaleDateString()}`;
-    await saveProject(
-      name,
-      tasksRef.current,
-      currentTaskName,
-      unit,
-      startDateRef.current,
-      endDateRef.current
-    );
+    await saveProject(name, tasksRef.current, currentTaskName, unit, startDateRef.current, endDateRef.current);
     setSaveName("");
     setSaveVisible(false);
-    if (settings.hapticsEnabled) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert("Saved!", `"${name}" saved as a project.`);
   }
 
-  // Save as template — structure only, no dates
   async function handleSaveAsTemplate() {
     const name = saveName.trim() || `Template ${new Date().toLocaleDateString()}`;
     await saveTemplate(name, tasksRef.current, currentTaskName, unit);
     setSaveName("");
     setSaveVisible(false);
-    if (settings.hapticsEnabled) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert("Saved!", `"${name}" saved as a template.`);
   }
 
-  // Load template — rebuilds with fresh dates from today
   function handleLoadTemplate(template: Template) {
     const today = new Date();
-    const daysBetweenDates = (s: string, e: string) => {
-      return Math.round((new Date(e).getTime() - new Date(s).getTime()) / (1000 * 60 * 60 * 24));
-    };
+    const daysBetweenDates = (s: string, e: string) =>
+      Math.round((new Date(e).getTime() - new Date(s).getTime()) / (1000 * 60 * 60 * 24));
     let currentStart = new Date(today);
     const rebuiltTasks: Task[] = template.tasks.map((task) => {
       const span = daysBetweenDates(task.startDate, task.endDate);
@@ -341,7 +361,6 @@ export default function Index() {
     setUnit(template.unit);
   }
 
-  // Load project — restores exact saved dates
   function handleLoadProject(project: Project) {
     saveTasks(project.tasks);
     setStartDateSync(new Date(project.startDate));
@@ -378,9 +397,7 @@ export default function Index() {
   }
 
   async function confirmAddTask(name: string) {
-    if (settings.hapticsEnabled) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const newTask: Task = {
       id: Date.now(),
       name: currentTaskName,
@@ -414,9 +431,7 @@ export default function Index() {
   }
 
   function handleReset() {
-    if (settings.hapticsEnabled) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert("Reset", "Clear all tasks and reset dates?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -437,9 +452,7 @@ export default function Index() {
   }
 
   function handleStartToday() {
-    if (settings.hapticsEnabled) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     shiftTasksToNewStart(new Date());
   }
 
@@ -449,9 +462,7 @@ export default function Index() {
   }
 
   function handleConfirm(date: Date) {
-    if (settings.hapticsEnabled) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (pickingField === "start") {
       if (tasksRef.current.length > 0) {
         shiftTasksToNewStart(date);
@@ -524,36 +535,23 @@ export default function Index() {
           </TouchableOpacity>
         </View>
 
-        {/* Date Fields — above wheel, show timeline or task dates */}
+        {/* Timeline dates — always shows full timeline, above wheel */}
         <View style={styles.dateRow}>
           <TouchableOpacity
-            style={[styles.dateField, {
-              backgroundColor: isDragging ? theme.cardHighlight : theme.card,
-              borderWidth: isDragging ? 1 : 0,
-              borderColor: theme.accent,
-            }]}
+            style={[styles.dateField, { backgroundColor: theme.card }]}
             onPress={() => openPicker("start")}
           >
-            <Text style={[styles.fieldLabel, { color: theme.muted }]}>
-              {isDragging ? "TASK START" : "TIMELINE START"}
-            </Text>
-            <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(displayStart)}</Text>
-            <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(displayStart)}</Text>
+            <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE START</Text>
+            <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineStart)}</Text>
+            <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineStart)}</Text>
           </TouchableOpacity>
-
           <TouchableOpacity
-            style={[styles.dateField, {
-              backgroundColor: theme.cardHighlight,
-              borderWidth: 1,
-              borderColor: theme.accent,
-            }]}
+            style={[styles.dateField, { backgroundColor: theme.cardHighlight, borderWidth: 1, borderColor: theme.accent }]}
             onPress={() => openPicker("end")}
           >
-            <Text style={[styles.fieldLabel, { color: theme.muted }]}>
-              {isDragging ? "TASK END" : "TIMELINE END"}
-            </Text>
-            <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(displayEnd)}</Text>
-            <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(displayEnd)}</Text>
+            <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE END</Text>
+            <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineEnd)}</Text>
+            <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineEnd)}</Text>
           </TouchableOpacity>
         </View>
 
@@ -575,6 +573,7 @@ export default function Index() {
           onEndDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             setEndDateSync(date);
+            setDragDisplayDates(prev => prev ? { ...prev, end: date } : null);
           }}
           onStartDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -583,8 +582,39 @@ export default function Index() {
             } else {
               setStartDateSync(date);
             }
+            setDragDisplayDates(prev => prev ? { ...prev, start: date } : null);
           }}
         />
+
+        {/* Active task dates — smaller, below wheel, updates live during drag */}
+        <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
+          <View style={styles.taskDateField}>
+            <Text style={[styles.taskDateLabel, { color: theme.muted }]}>
+              {activeTaskLabel.toUpperCase()} START
+            </Text>
+            <Text style={[styles.taskDateValue, { color: theme.text }]}>
+              {formatDate(activeTaskStart)}
+            </Text>
+          </View>
+          <View style={[styles.taskDateField, { borderLeftWidth: 0.5, borderLeftColor: theme.border }]}>
+            <Text style={[styles.taskDateLabel, { color: theme.muted }]}>
+              {activeTaskLabel.toUpperCase()} END
+            </Text>
+            <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>
+              {formatDate(activeTaskEnd)}
+            </Text>
+          </View>
+        </View>
+
+        {/* Add New Task — always visible below small task dates */}
+        <TouchableOpacity
+          style={[styles.addTaskBtn, { borderLeftColor: currentTaskColor }]}
+          onPress={handleAddTask}
+        >
+          <View style={[styles.taskColorDot, { backgroundColor: currentTaskColor }]} />
+          <Text style={styles.addTaskText}>+ Add New Task</Text>
+          <Text style={styles.addTaskSub}>{duration} {unit}</Text>
+        </TouchableOpacity>
 
         {/* Unit Selector Modal */}
         <Modal visible={unitModalVisible} transparent={true} animationType="fade" onRequestClose={() => setUnitModalVisible(false)}>
@@ -621,57 +651,26 @@ export default function Index() {
                   maxLength={40}
                 />
               </View>
-              {/* Save as Project */}
-              <TouchableOpacity
-                style={styles.saveOptionBtn}
-                onPress={handleSaveAsProject}
-              >
+              <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsProject}>
                 <Text style={styles.saveOptionIcon}>📁</Text>
                 <View style={styles.saveOptionText}>
                   <Text style={styles.saveOptionTitle}>Save as Project</Text>
                   <Text style={styles.saveOptionSub}>Saves actual dates — open and continue later</Text>
                 </View>
               </TouchableOpacity>
-              {/* Save as Template */}
-              <TouchableOpacity
-                style={[styles.saveOptionBtn, { marginBottom: 8 }]}
-                onPress={handleSaveAsTemplate}
-              >
+              <TouchableOpacity style={[styles.saveOptionBtn, { marginBottom: 8 }]} onPress={handleSaveAsTemplate}>
                 <Text style={styles.saveOptionIcon}>📋</Text>
                 <View style={styles.saveOptionText}>
                   <Text style={styles.saveOptionTitle}>Save as Template</Text>
                   <Text style={styles.saveOptionSub}>Saves structure only — reuse for new projects</Text>
                 </View>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cancelTemplateBtn}
-                onPress={() => { setSaveName(""); setSaveVisible(false); }}
-              >
+              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveVisible(false); }}>
                 <Text style={styles.cancelTemplateBtnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </Modal>
-
-        {/* Current Task */}
-        <TouchableOpacity
-          style={[styles.currentTaskBtn, { borderLeftColor: currentTaskColor, backgroundColor: theme.card }]}
-          onPress={handleRenameCurrentTask}
-        >
-          <View style={[styles.taskColorDot, { backgroundColor: currentTaskColor }]} />
-          <Text style={[styles.currentTaskText, { color: theme.text }]} numberOfLines={1}>{currentTaskName}</Text>
-          <Text style={styles.editHint}>✎</Text>
-        </TouchableOpacity>
-
-        {/* Add New Task */}
-        <TouchableOpacity
-          style={[styles.addTaskBtn, { borderLeftColor: currentTaskColor }]}
-          onPress={handleAddTask}
-        >
-          <View style={[styles.taskColorDot, { backgroundColor: currentTaskColor }]} />
-          <Text style={styles.addTaskText}>+ Add New Task</Text>
-          <Text style={styles.addTaskSub}>{duration} {unit}</Text>
-        </TouchableOpacity>
 
         {/* Project Timeline */}
         <View style={styles.taskSection}>
@@ -697,6 +696,7 @@ export default function Index() {
             </TouchableOpacity>
           ))}
 
+          {/* Active current task */}
           <TouchableOpacity
             style={[styles.taskItem, { backgroundColor: theme.card }]}
             onPress={handleRenameCurrentTask}
@@ -796,10 +796,12 @@ const styles = StyleSheet.create({
   fieldLabel: { fontSize: 10, fontWeight: "600", letterSpacing: 1.5, marginBottom: 4 },
   fieldValue: { fontSize: 15, fontWeight: "600" },
   fieldDay: { fontSize: 11, marginTop: 2 },
-  currentTaskBtn: { width: "100%", borderRadius: 16, padding: 16, flexDirection: "row", alignItems: "center", borderLeftWidth: 4, marginBottom: 8 },
-  currentTaskText: { fontSize: 15, fontWeight: "600", flex: 1 },
+  taskDateRow: { flexDirection: "row", width: "100%", borderRadius: 12, marginBottom: 8, overflow: "hidden" },
+  taskDateField: { flex: 1, padding: 10, alignItems: "center" },
+  taskDateLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1, marginBottom: 2 },
+  taskDateValue: { fontSize: 13, fontWeight: "600" },
   editHint: { fontSize: 14, color: "#5A7A96" },
-  addTaskBtn: { width: "100%", backgroundColor: "#1C2B38", borderRadius: 16, padding: 16, flexDirection: "row", alignItems: "center", borderLeftWidth: 4, marginBottom: 8 },
+  addTaskBtn: { width: "100%", backgroundColor: "#1C2B38", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", borderLeftWidth: 4, marginBottom: 8 },
   taskColorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
   addTaskText: { fontSize: 15, fontWeight: "600", color: "#FFFFFF", flex: 1 },
   addTaskSub: { fontSize: 13, color: "#5A7A96" },
