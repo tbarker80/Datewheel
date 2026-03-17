@@ -135,6 +135,9 @@ interface Props {
   onStartDateChange: (date: Date) => void;
   onBoundaryDragStart: (taskIndex: number) => void;
   onBoundaryChange: (taskIndex: number, newDate: Date) => void;
+  onEndDragStart: () => void;
+  onDragEnd: () => void;
+  onDragActive: (dragging: boolean) => void;
 }
 
 export default function DateWheel({
@@ -150,6 +153,9 @@ export default function DateWheel({
   onStartDateChange,
   onBoundaryDragStart,
   onBoundaryChange,
+  onEndDragStart,
+  onDragEnd,
+  onDragActive,
 }: Props) {
   const monthStarts = getMonthStartDays();
   const holidayDays = getHolidayDays(holidayCountry, startDate.getFullYear());
@@ -245,8 +251,10 @@ export default function DateWheel({
     } else {
       dragTargetRef.current = 'end';
       setActiveDot('end');
+      onEndDragStart();
     }
     isDraggingRef.current = true;
+    onDragActive(true);
   }
 
   function handleDragUpdate(touchX: number, touchY: number) {
@@ -288,6 +296,8 @@ export default function DateWheel({
   function handleDragEnd() {
     isDraggingRef.current = false;
     setActiveDot(null);
+    onDragActive(false);
+    onDragEnd();
   }
 
   const ringGesture = Gesture.Pan()
@@ -371,7 +381,6 @@ export default function DateWheel({
 
           <Circle cx={R} cy={R} r={R - 80} fill="#0F1923" stroke="#2E7DBC" strokeWidth={1.5}/>
 
-          {/* Task boundary dots */}
           {tasks.map((task, i) => {
             const te = new Date(task.endDate);
             const tEndDay = getDayOfYear(te);
@@ -381,10 +390,7 @@ export default function DateWheel({
             return (
               <React.Fragment key={task.id}>
                 {isActive && (
-                  <Circle
-                    cx={tEndXY.x} cy={tEndXY.y} r={20}
-                    fill={task.color} fillOpacity={0.2}
-                  />
+                  <Circle cx={tEndXY.x} cy={tEndXY.y} r={20} fill={task.color} fillOpacity={0.2}/>
                 )}
                 <Circle
                   cx={tEndXY.x} cy={tEndXY.y}
@@ -398,7 +404,6 @@ export default function DateWheel({
             );
           })}
 
-          {/* Start dot */}
           {activeDot === 'start' && (
             <Circle cx={startXY.x} cy={startXY.y} r={22} fill="#2E9BFF" fillOpacity={0.2}/>
           )}
@@ -408,7 +413,6 @@ export default function DateWheel({
             strokeWidth={activeDot === 'start' ? 2.5 : 1.5}
             strokeOpacity={activeDot === 'start' ? 0.9 : 0.4}/>
 
-          {/* End dot */}
           {activeDot === 'end' && (
             <Circle cx={endXY.x} cy={endXY.y} r={24} fill="#F0A500" fillOpacity={0.2}/>
           )}
@@ -421,6 +425,7 @@ export default function DateWheel({
 
         </Svg>
 
+        {/* Center content — current duration / unit / total duration */}
         <View style={styles.centerContent} pointerEvents="box-none">
           {tasks.length > 0 && (
             <Text style={styles.centerTaskCount}>{tasks.length + 1} Tasks</Text>
@@ -430,9 +435,10 @@ export default function DateWheel({
             {unit.toUpperCase()} ▾
           </Text>
           {tasks.length > 0 && totalDuration !== "" && (
-            <View style={styles.totalBadge}>
-              <Text style={styles.centerTotal}>{totalDuration} total</Text>
-            </View>
+            <>
+              <Text style={styles.centerDurationTotal}>{totalDuration}</Text>
+              <Text style={styles.centerTotalLabel}>TOTAL</Text>
+            </>
           )}
           {exceededYear && (
             <Text style={styles.overlapWarning}>⚠ 1yr exceeded</Text>
@@ -472,21 +478,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2E9BFF',
     letterSpacing: 2,
-    marginTop: 4,
+    marginTop: 2,
+    marginBottom: 2,
   },
-  totalBadge: {
-    marginTop: 6,
-    backgroundColor: '#1C2B38',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 10,
-    borderWidth: 0.5,
-    borderColor: '#2E7DBC',
-  },
-  centerTotal: {
-    fontSize: 10,
+  centerDurationTotal: {
+    fontSize: 48,
+    fontWeight: '700',
     color: '#8AAFC4',
-    fontWeight: '500',
+    lineHeight: 54,
+  },
+  centerTotalLabel: {
+    fontSize: 10,
+    color: '#5A7A96',
+    letterSpacing: 1.5,
+    marginTop: 2,
   },
   overlapWarning: {
     fontSize: 11,

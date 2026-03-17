@@ -1,6 +1,8 @@
 import DateWheel, { Task, TASK_COLORS } from "@/components/datewheel";
 import GanttChart from "@/components/GanttChart";
 import { businessDaysWithHolidays } from "@/components/holidays";
+import { useProStatus } from "@/components/ProContext";
+import ProModal from "@/components/ProModal";
 import SettingsModal, { AppSettings } from "@/components/SettingsModal";
 import TaskNameModal from "@/components/TaskNameModal";
 import TemplatesModal, { Project, saveTemplate, Template } from "@/components/TemplatesModal";
@@ -105,6 +107,8 @@ async function saveProject(
 }
 
 export default function Index() {
+  const { isPro } = useProStatus();
+
   const today = new Date();
   const future = new Date();
   future.setDate(today.getDate() + 30);
@@ -122,6 +126,7 @@ export default function Index() {
   const [openVisible, setOpenVisible] = useState(false);
   const [saveVisible, setSaveVisible] = useState(false);
   const [ganttVisible, setGanttVisible] = useState(false);
+  const [proModalVisible, setProModalVisible] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -148,7 +153,6 @@ export default function Index() {
 
   const timelineStart = tasks.length > 0 ? new Date(tasks[0].startDate) : startDate;
   const timelineEnd = endDate;
-
   const activeTaskStart = isDragging && dragDisplayDates ? dragDisplayDates.start : startDate;
   const activeTaskEnd = isDragging && dragDisplayDates ? dragDisplayDates.end : endDate;
   const activeTaskLabel = isDragging && dragDisplayDates ? dragDisplayDates.label : currentTaskName;
@@ -236,9 +240,12 @@ export default function Index() {
   }
 
   function handleDragEnd() {
-    takeSnapshot();
     setIsDragging(false);
     setDragDisplayDates(null);
+    // Small delay lets React commit the final boundary position before snapshotting
+    setTimeout(() => {
+      takeSnapshot();
+    }, 50);
   }
 
   function handleDragActive(dragging: boolean) {
@@ -251,21 +258,15 @@ export default function Index() {
   async function handleBoundaryChange(taskIndex: number, newDate: Date) {
     const snapshot = taskSnapshotRef.current;
     if (!snapshot || snapshot.length === 0) return;
-
     const originalBoundaryDate = new Date(snapshot[taskIndex].endDate);
     const shiftMs = newDate.getTime() - originalBoundaryDate.getTime();
     const shiftDays = Math.round(shiftMs / (1000 * 60 * 60 * 24));
     if (shiftDays === 0) return;
-
     const updated = snapshot.map((task, i) => {
       if (i === taskIndex) {
         const newEnd = new Date(originalBoundaryDate);
         newEnd.setDate(newEnd.getDate() + shiftDays);
-        return {
-          ...task,
-          endDate: newEnd.toISOString(),
-          duration: String(daysBetween(new Date(task.startDate), newEnd)),
-        };
+        return { ...task, endDate: newEnd.toISOString(), duration: String(daysBetween(new Date(task.startDate), newEnd)) };
       } else if (i > taskIndex) {
         const newStart = new Date(task.startDate);
         const newEnd = new Date(task.endDate);
@@ -275,19 +276,12 @@ export default function Index() {
       }
       return { ...task };
     });
-
     setTasksSync(updated);
     await AsyncStorage.setItem("tasks", JSON.stringify(updated));
-
     const updatedTask = updated[taskIndex];
     if (updatedTask) {
-      setDragDisplayDates({
-        start: new Date(updatedTask.startDate),
-        end: new Date(updatedTask.endDate),
-        label: updatedTask.name,
-      });
+      setDragDisplayDates({ start: new Date(updatedTask.startDate), end: new Date(updatedTask.endDate), label: updatedTask.name });
     }
-
     const snapActiveStart = new Date(activeStartSnapshotRef.current);
     const snapActiveEnd = new Date(activeEndSnapshotRef.current);
     snapActiveStart.setDate(snapActiveStart.getDate() + shiftDays);
@@ -297,10 +291,7 @@ export default function Index() {
   }
 
   async function shiftTasksToNewStart(newStart: Date) {
-    if (tasksRef.current.length === 0) {
-      setStartDateSync(newStart);
-      return;
-    }
+    if (tasksRef.current.length === 0) { setStartDateSync(newStart); return; }
     const firstTaskStart = new Date(tasksRef.current[0].startDate);
     const shiftMs = newStart.getTime() - firstTaskStart.getTime();
     const shiftDays = Math.round(shiftMs / (1000 * 60 * 60 * 24));
@@ -324,8 +315,7 @@ export default function Index() {
   async function handleSaveAsProject() {
     const name = saveName.trim() || `Project ${new Date().toLocaleDateString()}`;
     await saveProject(name, tasksRef.current, currentTaskName, unit, startDateRef.current, endDateRef.current);
-    setSaveName("");
-    setSaveVisible(false);
+    setSaveName(""); setSaveVisible(false);
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert("Saved!", `"${name}" saved as a project.`);
   }
@@ -333,8 +323,7 @@ export default function Index() {
   async function handleSaveAsTemplate() {
     const name = saveName.trim() || `Template ${new Date().toLocaleDateString()}`;
     await saveTemplate(name, tasksRef.current, currentTaskName, unit);
-    setSaveName("");
-    setSaveVisible(false);
+    setSaveName(""); setSaveVisible(false);
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert("Saved!", `"${name}" saved as a template.`);
   }
@@ -369,8 +358,23 @@ export default function Index() {
     setUnit(project.unit);
   }
 
+  // Pro gate — show upgrade modal if not Pro
+  function requirePro(action: () => void) {
+    if (isPro) {
+      action();
+    } else {
+      setProModalVisible(true);
+    }
+  }
+
   function handleAddTask() {
-    setTaskNameVisible(true);
+    if (tasksRef.current.length === 0) {
+      // First task is always free
+      setTaskNameVisible(true);
+    } else {
+      // Multi-task requires Pro
+      requirePro(() => setTaskNameVisible(true));
+    }
   }
 
   function handleRenameCurrentTask() {
@@ -481,15 +485,9 @@ export default function Index() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
-      <StatusBar
-        barStyle={settings.darkMode ? "light-content" : "dark-content"}
-        backgroundColor={theme.bg}
-      />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-      >
+      <StatusBar barStyle={settings.darkMode ? "light-content" : "dark-content"} backgroundColor={theme.bg} />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+
         {/* Header */}
         <View style={styles.headerRow}>
           <View style={styles.titleRow}>
@@ -497,25 +495,34 @@ export default function Index() {
             <Text style={[styles.titleWheel, { color: theme.accent }]}>WHEEL</Text>
             <View style={styles.titleDot} />
           </View>
-          <TouchableOpacity style={styles.gearBtn} onPress={() => setSettingsVisible(true)}>
-            <Text style={styles.gearIcon}>⚙</Text>
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            {isPro && (
+              <View style={styles.proBadge}>
+                <Text style={styles.proBadgeText}>PRO</Text>
+              </View>
+            )}
+            <TouchableOpacity style={styles.gearBtn} onPress={() => setSettingsVisible(true)}>
+              <Text style={styles.gearIcon}>⚙</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Open / Save Banner */}
         <View style={styles.templateBanner}>
           <TouchableOpacity
             style={[styles.templateBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => setOpenVisible(true)}
+            onPress={() => requirePro(() => setOpenVisible(true))}
           >
             <Text style={styles.templateBtnIcon}>📂</Text>
             <Text style={[styles.templateBtnText, { color: theme.muted }]}>Open</Text>
+            {!isPro && <Text style={styles.lockIcon}>🔒</Text>}
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.saveTemplateBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => setSaveVisible(true)}
+            onPress={() => requirePro(() => setSaveVisible(true))}
           >
             <Text style={[styles.templateBtnText, { color: theme.accent }]}>Save</Text>
+            {!isPro && <Text style={styles.lockIconSmall}>🔒</Text>}
           </TouchableOpacity>
         </View>
 
@@ -535,7 +542,7 @@ export default function Index() {
           </TouchableOpacity>
         </View>
 
-        {/* Timeline dates — always shows full timeline, above wheel */}
+        {/* Timeline dates */}
         <View style={styles.dateRow}>
           <TouchableOpacity
             style={[styles.dateField, { backgroundColor: theme.card }]}
@@ -563,7 +570,7 @@ export default function Index() {
           unit={unit}
           tasks={tasks}
           totalDuration={totalDuration}
-          holidayCountry={settings.holidayCountry}
+          holidayCountry={isPro ? settings.holidayCountry : "NONE"}
           onUnitToggle={handleUnitToggle}
           onBoundaryDragStart={handleBoundaryDragStart}
           onBoundaryChange={handleBoundaryChange}
@@ -586,34 +593,32 @@ export default function Index() {
           }}
         />
 
-        {/* Active task dates — smaller, below wheel, updates live during drag */}
+        {/* Active task dates */}
         <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
           <View style={styles.taskDateField}>
             <Text style={[styles.taskDateLabel, { color: theme.muted }]}>
               {activeTaskLabel.toUpperCase()} START
             </Text>
-            <Text style={[styles.taskDateValue, { color: theme.text }]}>
-              {formatDate(activeTaskStart)}
-            </Text>
+            <Text style={[styles.taskDateValue, { color: theme.text }]}>{formatDate(activeTaskStart)}</Text>
           </View>
           <View style={[styles.taskDateField, { borderLeftWidth: 0.5, borderLeftColor: theme.border }]}>
             <Text style={[styles.taskDateLabel, { color: theme.muted }]}>
               {activeTaskLabel.toUpperCase()} END
             </Text>
-            <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>
-              {formatDate(activeTaskEnd)}
-            </Text>
+            <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>{formatDate(activeTaskEnd)}</Text>
           </View>
         </View>
 
-        {/* Add New Task — always visible below small task dates */}
+        {/* Add New Task */}
         <TouchableOpacity
           style={[styles.addTaskBtn, { borderLeftColor: currentTaskColor }]}
           onPress={handleAddTask}
         >
           <View style={[styles.taskColorDot, { backgroundColor: currentTaskColor }]} />
           <Text style={styles.addTaskText}>+ Add New Task</Text>
-          <Text style={styles.addTaskSub}>{duration} {unit}</Text>
+          <Text style={styles.addTaskSub}>
+            {tasksRef.current.length === 0 ? `${duration} ${unit}` : isPro ? `${duration} ${unit}` : '🔒 Pro'}
+          </Text>
         </TouchableOpacity>
 
         {/* Unit Selector Modal */}
@@ -714,13 +719,27 @@ export default function Index() {
 
           <Text style={[styles.savesHint, { color: theme.border }]}>Tap name to rename · Hold to delete</Text>
 
+          {/* Gantt — Pro only */}
           <TouchableOpacity
             style={[styles.ganttBtn, { borderColor: theme.border }]}
-            onPress={() => setGanttVisible(true)}
+            onPress={() => requirePro(() => setGanttVisible(true))}
           >
             <Text style={styles.ganttBtnIcon}>📊</Text>
-            <Text style={[styles.ganttBtnText, { color: theme.muted }]}>View Gantt Chart</Text>
+            <Text style={[styles.ganttBtnText, { color: theme.muted }]}>
+              View Gantt Chart{!isPro ? ' 🔒' : ''}
+            </Text>
           </TouchableOpacity>
+
+          {/* Upgrade button for free users */}
+          {!isPro && (
+            <TouchableOpacity
+              style={styles.upgradeBtn}
+              onPress={() => setProModalVisible(true)}
+            >
+              <Text style={styles.upgradeBtnText}>✨ Unlock Pro Features</Text>
+              <Text style={styles.upgradeBtnSub}>Multi-task, Gantt, Templates & more</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <DateTimePickerModal
@@ -758,6 +777,11 @@ export default function Index() {
         unit={unit}
         currentTaskColor={currentTaskColor}
       />
+      <ProModal
+        visible={proModalVisible}
+        onClose={() => setProModalVisible(false)}
+        onSuccess={() => setProModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -777,15 +801,20 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   container: { alignItems: "center", padding: 16, paddingBottom: 60 },
   headerRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   titleDate: { fontSize: 24, fontWeight: "700", letterSpacing: 3 },
   titleWheel: { fontSize: 24, fontWeight: "300", letterSpacing: 3 },
   titleDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#2E9BFF", marginLeft: 2, marginBottom: 2 },
+  proBadge: { backgroundColor: "#1A3A5C", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 0.5, borderColor: "#2E7DBC" },
+  proBadgeText: { fontSize: 9, fontWeight: "700", color: "#2E9BFF", letterSpacing: 1.5 },
   gearBtn: { padding: 8 },
   gearIcon: { fontSize: 24, color: "#5A7A96" },
+  lockIcon: { fontSize: 12, marginLeft: 4 },
+  lockIconSmall: { fontSize: 10, marginLeft: 2 },
   templateBanner: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
   templateBtn: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 8, borderRadius: 10, borderWidth: 0.5 },
-  saveTemplateBtn: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8, borderRadius: 10, borderWidth: 0.5 },
+  saveTemplateBtn: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8, borderRadius: 10, borderWidth: 0.5, flexDirection: "row", gap: 4 },
   templateBtnIcon: { fontSize: 14 },
   templateBtnText: { fontSize: 13, fontWeight: "500" },
   quickRow: { flexDirection: "row", gap: 10, width: "100%", marginBottom: 12 },
@@ -820,6 +849,9 @@ const styles = StyleSheet.create({
   ganttBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 12, borderWidth: 1, marginTop: 8 },
   ganttBtnIcon: { fontSize: 16 },
   ganttBtnText: { fontSize: 14, fontWeight: "500" },
+  upgradeBtn: { width: "100%", backgroundColor: "#1A3A5C", borderRadius: 16, padding: 16, alignItems: "center", marginTop: 12, borderWidth: 1, borderColor: "#2E7DBC" },
+  upgradeBtnText: { fontSize: 15, fontWeight: "700", color: "#2E9BFF", marginBottom: 4 },
+  upgradeBtnSub: { fontSize: 12, color: "#5A7A96" },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", alignItems: "center", justifyContent: "center" },
   modalBox: { width: "85%", backgroundColor: "#1C2B38", borderRadius: 20, padding: 8, borderWidth: 1, borderColor: "#2E7DBC" },
   modalTitle: { fontSize: 13, fontWeight: "600", color: "#5A7A96", letterSpacing: 1.5, textAlign: "center", paddingVertical: 16, borderBottomWidth: 0.5, borderBottomColor: "#2A3F52" },
