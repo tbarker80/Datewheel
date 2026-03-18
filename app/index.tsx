@@ -133,6 +133,7 @@ export default function Index() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [currentTaskName, setCurrentTaskName] = useState("Current Task");
   const [isDragging, setIsDragging] = useState(false);
+  const [tappedTaskId, setTappedTaskId] = useState<number | null>(null);
   const [dragDisplayDates, setDragDisplayDates] = useState<{
     start: Date;
     end: Date;
@@ -153,9 +154,10 @@ export default function Index() {
 
   const timelineStart = tasks.length > 0 ? new Date(tasks[0].startDate) : startDate;
   const timelineEnd = endDate;
-  const activeTaskStart = isDragging && dragDisplayDates ? dragDisplayDates.start : startDate;
-  const activeTaskEnd = isDragging && dragDisplayDates ? dragDisplayDates.end : endDate;
-  const activeTaskLabel = isDragging && dragDisplayDates ? dragDisplayDates.label : currentTaskName;
+  const tappedTask = tappedTaskId !== null ? tasks.find(t => t.id === tappedTaskId) : null;
+  const activeTaskStart = tappedTask ? new Date(tappedTask.startDate) : isDragging && dragDisplayDates ? dragDisplayDates.start : startDate;
+  const activeTaskEnd = tappedTask ? new Date(tappedTask.endDate) : isDragging && dragDisplayDates ? dragDisplayDates.end : endDate;
+  const activeTaskLabel = tappedTask ? tappedTask.name : isDragging && dragDisplayDates ? dragDisplayDates.label : currentTaskName;
 
   useEffect(() => {
     loadSettings();
@@ -255,6 +257,12 @@ export default function Index() {
     }
   }
 
+  function handleTaskTap(taskId: number | null) {
+    setTappedTaskId(taskId);
+    if (settings.hapticsEnabled && taskId !== null) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }
   async function handleBoundaryChange(taskIndex: number, newDate: Date) {
     const snapshot = taskSnapshotRef.current;
     if (!snapshot || snapshot.length === 0) return;
@@ -577,6 +585,8 @@ export default function Index() {
           onEndDragStart={handleEndDragStart}
           onDragEnd={handleDragEnd}
           onDragActive={handleDragActive}
+          highlightedTaskId={tappedTaskId}
+          onTaskTap={handleTaskTap}
           onEndDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             setEndDateSync(date);

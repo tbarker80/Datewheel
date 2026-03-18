@@ -130,6 +130,7 @@ interface Props {
   tasks: Task[];
   totalDuration: string;
   holidayCountry: string;
+  highlightedTaskId: number | null;
   onUnitToggle: () => void;
   onEndDateChange: (date: Date) => void;
   onStartDateChange: (date: Date) => void;
@@ -138,6 +139,7 @@ interface Props {
   onEndDragStart: () => void;
   onDragEnd: () => void;
   onDragActive: (dragging: boolean) => void;
+  onTaskTap: (taskId: number | null) => void;
 }
 
 export default function DateWheel({
@@ -148,6 +150,7 @@ export default function DateWheel({
   tasks,
   totalDuration,
   holidayCountry,
+  highlightedTaskId,
   onUnitToggle,
   onEndDateChange,
   onStartDateChange,
@@ -156,6 +159,7 @@ export default function DateWheel({
   onEndDragStart,
   onDragEnd,
   onDragActive,
+  onTaskTap,
 }: Props) {
   const monthStarts = getMonthStartDays();
   const holidayDays = getHolidayDays(holidayCountry, startDate.getFullYear());
@@ -304,11 +308,51 @@ export default function DateWheel({
     onDragActive(false);
     onDragEnd();
   }
+function handleTap(touchX: number, touchY: number) {
+    // Only process taps in the ring area
+    const dx = touchX - R;
+    const dy = touchY - R;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance < RING_RADIUS - 20 || distance > RING_RADIUS + 20) {
+      // Tapped outside ring — deselect
+      onTaskTap(null);
+      return;
+    }
 
-  const ringGesture = Gesture.Pan()
+    // Calculate angle of tap
+    let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+    if (angle < 0) angle += 360;
+    const tappedDay = Math.round((angle / 360) * TOTAL_DAYS);
+
+    // Check which task arc this falls on
+    for (const task of tasks) {
+      const ts = new Date(task.startDate);
+      const te = new Date(task.endDate);
+      const tStartDay = getDayOfYear(ts);
+      const tEndDay = getDayOfYear(te);
+      if (tappedDay >= tStartDay && tappedDay <= tEndDay) {
+        // Toggle — if already selected, deselect
+        if (highlightedTaskId === task.id) {
+          onTaskTap(null);
+        } else {
+          onTaskTap(task.id);
+        }
+        return;
+      }
+    }
+    // Tapped on active arc or empty — deselect
+    onTaskTap(null);
+  }
+
+  const tapGesture = Gesture.Tap()
+    .onEnd((e) => { runOnJS(handleTap)(e.x, e.y); });
+
+  const panGesture = Gesture.Pan()
     .onStart((e) => { runOnJS(handleDragStart)(e.x, e.y); })
     .onUpdate((e) => { runOnJS(handleDragUpdate)(e.x, e.y); })
     .onEnd(() => { runOnJS(handleDragEnd)(); });
+
+  const ringGesture = Gesture.Race(tapGesture, panGesture);
 
   return (
     <GestureDetector gesture={ringGesture}>
@@ -326,8 +370,29 @@ export default function DateWheel({
             const path = buildArcPath(tStartDay, tEndDay, tSameYear);
             const color = exceededYear && task === tasks[tasks.length - 1]
               ? OVERLAP_COLOR : task.color;
+            const isHighlighted = highlightedTaskId === task.id;
+            const isDimmed = highlightedTaskId !== null && !isHighlighted;
             return path ? (
-              <Path key={task.id} d={path} fill="none" stroke={color} strokeWidth={36} strokeOpacity={0.7}/>
+              <React.Fragment key={task.id}>
+                {isHighlighted && (
+                  <Path
+                    key={`glow-${task.id}`}
+                    d={path}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={44}
+                    strokeOpacity={0.25}
+                  />
+                )}
+                <Path
+                  key={task.id}
+                  d={path}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={isHighlighted ? 40 : 36}
+                  strokeOpacity={isDimmed ? 0.25 : isHighlighted ? 1.0 : 0.7}
+                />
+              </React.Fragment>
             ) : null;
           })}
 
@@ -461,7 +526,14 @@ export default function DateWheel({
           {tasks.length > 0 && (
             <Text style={styles.centerTaskCount}>{tasks.length + 1} Tasks</Text>
           )}
-          <Text style={styles.centerDuration}>{duration}</Text>
+          <Text style={styles.centerDuration}>
+            {highlightedTaskId !== null
+              ? (() => {
+                  const t = tasks.find(t => t.id === highlightedTaskId);
+                  return t ? t.duration : duration;
+                })()
+              : duration}
+          </Text>
           <Text style={styles.centerUnit} onPress={onUnitToggle}>
             {unit.toUpperCase()} ▾
           </Text>
