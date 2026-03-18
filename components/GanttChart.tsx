@@ -1,37 +1,37 @@
-import React from 'react';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import React, { useRef, useState } from 'react';
 import {
-    Dimensions,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  useWindowDimensions,
 } from 'react-native';
-import { Task } from './datewheel';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Milestone, Task } from './datewheel';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
 const ROW_HEIGHT = 56;
-const LABEL_WIDTH = 120;
-const BAR_AREA = SCREEN_WIDTH * 2.5;
-const MIN_BAR_WIDTH = 24;
+const LABEL_WIDTH = 130;
+const HEADER_HEIGHT = 36;
+const DEFAULT_ZOOM = 2.5;
+const MIN_ZOOM = 1.0;
+const MAX_ZOOM = 6.0;
 
 function formatShort(date: Date) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function formatDateFull(date: Date) {
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 interface Props {
   visible: boolean;
   onClose: () => void;
   tasks: Task[];
+  milestones?: Milestone[];
   currentTaskName: string;
   startDate: Date;
   endDate: Date;
@@ -44,6 +44,7 @@ export default function GanttChart({
   visible,
   onClose,
   tasks,
+  milestones = [],
   currentTaskName,
   startDate,
   endDate,
@@ -51,6 +52,24 @@ export default function GanttChart({
   unit,
   currentTaskColor,
 }: Props) {
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isLandscape = screenWidth > screenHeight;
+  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+
+  const labelScrollRef = useRef<ScrollView>(null);
+  const barScrollRef = useRef<ScrollView>(null);
+  const isSyncingLabel = useRef(false);
+  const isSyncingBar = useRef(false);
+
+  const barArea = Math.max(screenWidth * zoom, 800);
+
+  React.useEffect(() => {
+    if (visible) {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    } else {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
+    }
+  }, [visible]);
 
   const allTasks = [
     ...tasks,
@@ -72,15 +91,17 @@ export default function GanttChart({
   const totalMs = projectEnd.getTime() - projectStart.getTime();
   const today = new Date();
 
+  function getX(date: Date): number {
+    return Math.max(((date.getTime() - projectStart.getTime()) / totalMs) * barArea, 0);
+  }
+
   function getMonthLabels() {
     const labels: { label: string; x: number }[] = [];
     const current = new Date(projectStart.getFullYear(), projectStart.getMonth(), 1);
     while (current <= projectEnd) {
-      const ms = current.getTime() - projectStart.getTime();
-      const x = Math.max((ms / totalMs) * BAR_AREA, 0);
       labels.push({
         label: current.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-        x,
+        x: getX(current),
       });
       current.setMonth(current.getMonth() + 1);
     }
@@ -88,105 +109,158 @@ export default function GanttChart({
   }
 
   const monthLabels = getMonthLabels();
-
-  const todayX = today >= projectStart && today <= projectEnd
-    ? ((today.getTime() - projectStart.getTime()) / totalMs) * BAR_AREA
-    : -1;
+  const todayX = today >= projectStart && today <= projectEnd ? getX(today) : -1;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.container}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={styles.container}>
 
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={onClose}>
-            <Text style={styles.backText}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>GANTT CHART</Text>
-          <Text style={styles.headerSub}>
-            {formatDateFull(projectStart)} → {formatDateFull(projectEnd)}
-          </Text>
-        </View>
+          {/* Header */}
+          <View style={[styles.header, { paddingTop: isLandscape ? 12 : 52 }]}>
+            <View style={styles.headerTopRow}>
+              <TouchableOpacity style={styles.backBtn} onPress={onClose}>
+                <Text style={styles.backText}>← Back</Text>
+              </TouchableOpacity>
+              {/* Zoom controls */}
+              <View style={styles.zoomRow}>
+                <TouchableOpacity
+                  style={styles.zoomBtn}
+                  onPress={() => setZoom(z => Math.max(+(z - 0.5).toFixed(1), MIN_ZOOM))}
+                >
+                  <Text style={styles.zoomBtnText}>− Out</Text>
+                </TouchableOpacity>
+                <Text style={styles.zoomLevel}>{Math.round(zoom * 100 / DEFAULT_ZOOM)}%</Text>
+                <TouchableOpacity
+                  style={styles.zoomBtn}
+                  onPress={() => setZoom(z => Math.min(+(z + 0.5).toFixed(1), MAX_ZOOM))}
+                >
+                  <Text style={styles.zoomBtnText}>+ In</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <Text style={styles.headerTitle}>GANTT CHART</Text>
+            <Text style={styles.headerSub}>
+              {formatDateFull(projectStart)} → {formatDateFull(projectEnd)}
+            </Text>
+          </View>
 
-        {/* Gantt body — horizontal scroll wraps everything */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={true}
-          style={styles.horizontalScroll}
-          contentContainerStyle={{ minWidth: LABEL_WIDTH + BAR_AREA }}
-        >
-          <View>
+          {/* Chart area */}
+          <View style={styles.chartArea}>
 
-            {/* Month header row */}
-            <View style={styles.monthHeaderRow}>
+            {/* Frozen label column */}
+            <View style={styles.labelColumn}>
+              {/* Label column header */}
               <View style={styles.labelHeaderCell}>
                 <Text style={styles.labelHeaderText}>TASK</Text>
               </View>
-              <View style={{ width: BAR_AREA, position: 'relative', height: 36 }}>
-                {monthLabels.map((m, i) => (
-                  <React.Fragment key={i}>
-                    <Text style={[styles.monthLabel, { left: m.x + 4 }]}>
-                      {m.label}
-                    </Text>
-                    <View style={[styles.monthDivider, { left: m.x }]} />
-                  </React.Fragment>
-                ))}
-              </View>
-            </View>
-
-            {/* Task rows */}
-            <ScrollView
-              horizontal={false}
-              showsVerticalScrollIndicator={false}
-            >
-              {allTasks.map((task, i) => {
-                const taskStart = new Date(task.startDate);
-                const taskEnd = new Date(task.endDate);
-                const startMs = taskStart.getTime() - projectStart.getTime();
-                const durationMs = taskEnd.getTime() - taskStart.getTime();
-                const barX = Math.max((startMs / totalMs) * BAR_AREA, 0);
-                const barW = Math.max((durationMs / totalMs) * BAR_AREA, MIN_BAR_WIDTH);
-                const isActive = task.id === -1;
-
-                return (
-                  <View
-                    key={task.id}
-                    style={[styles.row, i % 2 === 0 && styles.rowAlt]}
-                  >
-                    {/* Label */}
-                    <View style={styles.labelCell}>
+              {/* Label rows — synced scroll */}
+              <ScrollView
+                ref={labelScrollRef}
+                showsVerticalScrollIndicator={false}
+                scrollEnabled={true}
+                onScroll={(e) => {
+                  if (isSyncingLabel.current) return;
+                  isSyncingBar.current = true;
+                  barScrollRef.current?.scrollTo({
+                    y: e.nativeEvent.contentOffset.y,
+                    animated: false,
+                  });
+                  setTimeout(() => { isSyncingBar.current = false; }, 50);
+                }}
+                scrollEventThrottle={16}
+                style={{ flex: 1 }}
+              >
+                {allTasks.map((task, i) => {
+                  const isActive = task.id === -1;
+                  return (
+                    <View
+                      key={task.id}
+                      style={[styles.labelCell, i % 2 === 0 && styles.rowAlt]}
+                    >
                       <View style={[styles.taskColorDot, { backgroundColor: task.color }]} />
-                      <View style={styles.labelText}>
+                      <View style={styles.labelTextBlock}>
                         <Text style={styles.taskLabel} numberOfLines={1}>
-                          {task.name}
-                          {isActive ? ' ●' : ''}
+                          {task.name}{isActive ? ' ●' : ''}
                         </Text>
                         <Text style={styles.taskDates}>
-                          {formatShort(taskStart)} → {formatShort(taskEnd)}
+                          {formatShort(new Date(task.startDate))} → {formatShort(new Date(task.endDate))}
                         </Text>
                       </View>
                     </View>
+                  );
+                })}
+                {milestones.map((m, i) => (
+                  <View
+                    key={`ms-label-${m.id}`}
+                    style={[styles.labelCell, (allTasks.length + i) % 2 === 0 && styles.rowAlt]}
+                  >
+                    <View style={[styles.milestoneDot, { backgroundColor: m.color }]} />
+                    <View style={styles.labelTextBlock}>
+                      <Text style={styles.taskLabel} numberOfLines={1}>◆ {m.name}</Text>
+                      <Text style={styles.taskDates}>{formatShort(new Date(m.date))}</Text>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
 
-                    {/* Bar area */}
-                    <View style={[styles.barCell, { width: BAR_AREA }]}>
+            {/* Scrollable bar area */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={true}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ width: barArea }}
+            >
+              <View style={{ flex: 1 }}>
 
-                      {/* Grid lines */}
-                      {monthLabels.map((m, mi) => (
-                        <View key={`grid-${mi}`} style={[styles.gridLine, { left: m.x }]} />
-                      ))}
+                {/* Month header */}
+                <View style={[styles.monthHeaderRow, { width: barArea }]}>
+                  {monthLabels.map((m, i) => (
+                    <React.Fragment key={i}>
+                      <Text style={[styles.monthLabel, { left: m.x + 4 }]}>{m.label}</Text>
+                      <View style={[styles.monthDivider, { left: m.x }]} />
+                    </React.Fragment>
+                  ))}
+                </View>
 
-                      {/* Today line */}
-                      {todayX > 0 && (
-                        <View style={[styles.todayLine, { left: todayX }]} />
-                      )}
-
-                      {/* Task bar */}
+                {/* Vertically scrollable rows */}
+                <ScrollView
+                  ref={barScrollRef}
+                  showsVerticalScrollIndicator={false}
+                  onScroll={(e) => {
+                    if (isSyncingBar.current) return;
+                    isSyncingLabel.current = true;
+                    labelScrollRef.current?.scrollTo({
+                      y: e.nativeEvent.contentOffset.y,
+                      animated: false,
+                    });
+                    setTimeout(() => { isSyncingLabel.current = false; }, 50);
+                  }}
+                  scrollEventThrottle={16}
+                >
+                  {/* Task bars */}
+                  {allTasks.map((task, i) => {
+                    const taskStart = new Date(task.startDate);
+                    const taskEnd = new Date(task.endDate);
+                    const barX = getX(taskStart);
+                    const barW = Math.max(
+                      ((taskEnd.getTime() - taskStart.getTime()) / totalMs) * barArea,
+                      24
+                    );
+                    const isActive = task.id === -1;
+                    return (
                       <View
-                        style={[
+                        key={task.id}
+                        style={[styles.barRow, { width: barArea }, i % 2 === 0 && styles.rowAlt]}
+                      >
+                        {monthLabels.map((m, mi) => (
+                          <View key={`grid-${mi}`} style={[styles.gridLine, { left: m.x }]} />
+                        ))}
+                        {todayX > 0 && (
+                          <View style={[styles.todayLine, { left: todayX }]} />
+                        )}
+                        <View style={[
                           styles.bar,
                           {
                             left: barX,
@@ -196,179 +270,162 @@ export default function GanttChart({
                             borderWidth: isActive ? 1.5 : 0,
                             borderColor: '#FFFFFF',
                           },
-                        ]}
-                      >
-                        {barW > 50 && (
-                          <Text style={styles.barLabel} numberOfLines={1}>
-                            {task.duration} {task.unit}
-                          </Text>
-                        )}
+                        ]}>
+                          {barW > 50 && (
+                            <Text style={styles.barLabel} numberOfLines={1}>
+                              {task.duration} {task.unit}
+                            </Text>
+                          )}
+                        </View>
                       </View>
+                    );
+                  })}
 
-                    </View>
+                  {/* Milestone rows */}
+                  {milestones.map((milestone, i) => {
+                    const mX = getX(new Date(milestone.date));
+                    return (
+                      <View
+                        key={`ms-bar-${milestone.id}`}
+                        style={[styles.barRow, { width: barArea }, (allTasks.length + i) % 2 === 0 && styles.rowAlt]}
+                      >
+                        {monthLabels.map((m, mi) => (
+                          <View key={`grid-${mi}`} style={[styles.gridLine, { left: m.x }]} />
+                        ))}
+                        {todayX > 0 && (
+                          <View style={[styles.todayLine, { left: todayX }]} />
+                        )}
+                        <View style={[styles.milestoneLine, { left: mX, backgroundColor: milestone.color }]} />
+                        <View style={[styles.milestoneDiamond, {
+                          left: mX - 7,
+                          top: ROW_HEIGHT / 2 - 7,
+                          backgroundColor: milestone.color,
+                        }]} />
+                        <Text style={[styles.milestoneBarLabel, {
+                          left: mX + 12,
+                          top: ROW_HEIGHT / 2 - 7,
+                          color: milestone.color,
+                        }]} numberOfLines={1}>
+                          {milestone.name}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Today label */}
+                {todayX > 0 && (
+                  <View style={{ height: 20, width: barArea, position: 'relative' }}>
+                    <Text style={[styles.todayLabelText, { left: todayX - 14 }]}>TODAY</Text>
                   </View>
-                );
-              })}
-            </ScrollView>
-
-            {/* Today label row */}
-            {todayX > 0 && (
-              <View style={{ height: 24, width: LABEL_WIDTH + BAR_AREA, position: 'relative' }}>
-                <View style={[styles.todayLabelContainer, { left: LABEL_WIDTH + todayX - 16 }]}>
-                  <Text style={styles.todayLabelText}>TODAY</Text>
-                </View>
+                )}
               </View>
-            )}
+            </ScrollView>
+          </View>
 
+          {/* Legend */}
+          <View style={styles.legend}>
+            <View style={styles.legendItem}>
+              <View style={styles.legendTodayLine} />
+              <Text style={styles.legendText}>Today</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#FFFFFF', opacity: 0.6 }]} />
+              <Text style={styles.legendText}>Active</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={styles.legendDiamond} />
+              <Text style={styles.legendText}>Milestone</Text>
+            </View>
+            <Text style={styles.legendHint}>Scroll horizontally to explore</Text>
           </View>
-        </ScrollView>
 
-        {/* Legend */}
-        <View style={styles.legend}>
-          <View style={styles.legendItem}>
-            <View style={styles.legendTodayLine} />
-            <Text style={styles.legendText}>Today</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#FFFFFF', opacity: 0.6 }]} />
-            <Text style={styles.legendText}>Active task</Text>
-          </View>
-          <Text style={styles.legendHint}>Scroll to explore →</Text>
         </View>
-
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0F1923',
-  },
+  container: { flex: 1, backgroundColor: '#0F1923' },
   header: {
-    paddingTop: 56,
-    paddingBottom: 16,
+    paddingBottom: 12,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: '#2A3F52',
     backgroundColor: '#0F1923',
   },
-  backBtn: {
-    marginBottom: 8,
-  },
-  backText: {
-    fontSize: 16,
-    color: '#2E9BFF',
-    fontWeight: '500',
-  },
-  headerTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#5A7A96',
-    letterSpacing: 1.5,
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 4,
   },
-  headerSub: {
-    fontSize: 13,
-    color: '#5A7A96',
+  backBtn: {},
+  backText: { fontSize: 16, color: '#2E9BFF', fontWeight: '500' },
+  zoomRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  zoomBtn: {
+    backgroundColor: '#1C2B38',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 0.5,
+    borderColor: '#2A3F52',
   },
-  horizontalScroll: {
-    flex: 1,
+  zoomBtnText: { fontSize: 11, color: '#2E9BFF', fontWeight: '600' },
+  zoomLevel: { fontSize: 11, color: '#5A7A96', minWidth: 36, textAlign: 'center' },
+  headerTitle: { fontSize: 13, fontWeight: '600', color: '#5A7A96', letterSpacing: 1.5, marginBottom: 2 },
+  headerSub: { fontSize: 12, color: '#5A7A96' },
+  chartArea: { flex: 1, flexDirection: 'row' },
+  labelColumn: {
+    width: LABEL_WIDTH,
+    borderRightWidth: 1,
+    borderRightColor: '#2A3F52',
+    backgroundColor: '#0F1923',
+    zIndex: 10,
   },
-  monthHeaderRow: {
-    flexDirection: 'row',
+  labelHeaderCell: {
+    height: HEADER_HEIGHT,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#2A3F52',
     backgroundColor: '#1C2B38',
-    height: 36,
   },
-  labelHeaderCell: {
-    width: LABEL_WIDTH,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    borderRightWidth: 0.5,
-    borderRightColor: '#2A3F52',
-  },
-  labelHeaderText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#5A7A96',
-    letterSpacing: 1.5,
-  },
-  monthLabel: {
-    position: 'absolute',
-    fontSize: 11,
-    color: '#5A7A96',
-    fontWeight: '500',
-    top: 8,
-  },
-  monthDivider: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 0.5,
-    backgroundColor: '#2A3F52',
-  },
-  row: {
-    flexDirection: 'row',
+  labelHeaderText: { fontSize: 10, fontWeight: '600', color: '#5A7A96', letterSpacing: 1.5 },
+  labelCell: {
     height: ROW_HEIGHT,
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 10,
+    gap: 6,
     borderBottomWidth: 0.5,
     borderBottomColor: '#1C2B38',
   },
-  rowAlt: {
-    backgroundColor: '#0D1820',
+  taskColorDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  milestoneDot: { width: 8, height: 8, transform: [{ rotate: '45deg' }], flexShrink: 0 },
+  labelTextBlock: { flex: 1 },
+  taskLabel: { fontSize: 11, fontWeight: '600', color: '#FFFFFF', marginBottom: 2 },
+  taskDates: { fontSize: 9, color: '#5A7A96' },
+  monthHeaderRow: {
+    height: HEADER_HEIGHT,
+    position: 'relative',
+    backgroundColor: '#1C2B38',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A3F52',
   },
-  labelCell: {
-    width: LABEL_WIDTH,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: ROW_HEIGHT,
-    borderRightWidth: 0.5,
-    borderRightColor: '#2A3F52',
-  },
-  taskColorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    flexShrink: 0,
-  },
-  labelText: {
-    flex: 1,
-  },
-  taskLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  taskDates: {
-    fontSize: 9,
-    color: '#5A7A96',
-  },
-  barCell: {
+  monthLabel: { position: 'absolute', fontSize: 11, color: '#5A7A96', fontWeight: '500', top: 10 },
+  monthDivider: { position: 'absolute', top: 0, bottom: 0, width: 0.5, backgroundColor: '#2A3F52' },
+  barRow: {
     height: ROW_HEIGHT,
     position: 'relative',
     overflow: 'hidden',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#1C2B38',
   },
-  todayLine: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 1.5,
-    backgroundColor: '#F0A500',
-    zIndex: 10,
-  },
-  gridLine: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 0.5,
-    backgroundColor: '#1C2B38',
-  },
+  rowAlt: { backgroundColor: '#0D1820' },
+  gridLine: { position: 'absolute', top: 0, bottom: 0, width: 0.5, backgroundColor: '#1C2B38' },
+  todayLine: { position: 'absolute', top: 0, bottom: 0, width: 1.5, backgroundColor: '#F0A500', zIndex: 10 },
   bar: {
     position: 'absolute',
     top: 10,
@@ -377,55 +434,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
-  barLabel: {
+  barLabel: { fontSize: 10, color: '#FFFFFF', fontWeight: '600' },
+  milestoneLine: { position: 'absolute', top: 0, bottom: 0, width: 1.5, opacity: 0.7 },
+  milestoneDiamond: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    transform: [{ rotate: '45deg' }],
+  },
+  milestoneBarLabel: {
+    position: 'absolute',
     fontSize: 10,
-    color: '#FFFFFF',
     fontWeight: '600',
   },
-  todayLabelContainer: {
-    position: 'absolute',
-    top: 4,
-  },
   todayLabelText: {
+    position: 'absolute',
     fontSize: 9,
     color: '#F0A500',
     fontWeight: '600',
     letterSpacing: 1,
+    top: 4,
   },
   legend: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderTopWidth: 0.5,
     borderTopColor: '#2A3F52',
     backgroundColor: '#0F1923',
+    gap: 16,
   },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  legendTodayLine: {
-    width: 16,
-    height: 2,
-    backgroundColor: '#F0A500',
-    borderRadius: 1,
-    marginRight: 6,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  legendText: {
-    fontSize: 11,
-    color: '#5A7A96',
-  },
-  legendHint: {
-    fontSize: 11,
-    color: '#2A3F52',
-  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendTodayLine: { width: 16, height: 2, backgroundColor: '#F0A500', borderRadius: 1 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendDiamond: { width: 8, height: 8, backgroundColor: '#F0A500', transform: [{ rotate: '45deg' }] },
+  legendText: { fontSize: 11, color: '#5A7A96' },
+  legendHint: { fontSize: 11, color: '#2A3F52', marginLeft: 'auto' as any },
 });

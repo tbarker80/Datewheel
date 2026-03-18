@@ -506,27 +506,28 @@ export default function DateWheel({
             );
           })}
 
-          {/* Milestone diamonds — rendered on top of task arcs */}
+          {/* Milestone diamonds — inside the task ring */}
           {milestones.map((milestone) => {
             const mDate = new Date(milestone.date);
             const mDay = getDayOfYear(mDate);
             const mAngle = dayToAngle(mDay);
-            const mXY = angleToXY(mAngle, RING_RADIUS);
-            const size = 10;
+            // Place on inside edge of ring
+            const mXY = angleToXY(mAngle, RING_RADIUS - 22);
+            const size = 6;
             return (
               <React.Fragment key={`ms-${milestone.id}`}>
                 <Circle
                   cx={mXY.x} cy={mXY.y}
-                  r={18}
+                  r={10}
                   fill={milestone.color}
-                  fillOpacity={0.15}
+                  fillOpacity={0.2}
                 />
                 <Path
                   d={`M ${mXY.x} ${mXY.y - size} L ${mXY.x + size} ${mXY.y} L ${mXY.x} ${mXY.y + size} L ${mXY.x - size} ${mXY.y} Z`}
                   fill={milestone.color}
                   stroke="#FFFFFF"
-                  strokeWidth={1.5}
-                  strokeOpacity={0.8}
+                  strokeWidth={1}
+                  strokeOpacity={0.9}
                 />
               </React.Fragment>
             );

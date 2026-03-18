@@ -900,6 +900,7 @@ export default function Index() {
         visible={ganttVisible}
         onClose={() => setGanttVisible(false)}
         tasks={tasks}
+        milestones={milestones}
         currentTaskName={currentTaskName}
         startDate={startDate}
         endDate={endDate}
