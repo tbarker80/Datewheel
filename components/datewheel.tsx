@@ -39,6 +39,23 @@ export const TASK_COLORS = [
 
 export const OVERLAP_COLOR = '#EF4444';
 
+export interface Task {
+  id: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  color: string;
+  duration: string;
+  unit: string;
+}
+
+export interface Milestone {
+  id: number;
+  name: string;
+  date: string;
+  color: string;
+}
+
 function dayToAngle(dayOfYear: number) {
   return (dayOfYear / TOTAL_DAYS) * 360 - 90;
 }
@@ -112,22 +129,13 @@ function buildArcPath(startDay: number, endDay: number, sameYear: boolean): stri
   }
 }
 
-export interface Task {
-  id: number;
-  name: string;
-  startDate: string;
-  endDate: string;
-  color: string;
-  duration: string;
-  unit: string;
-}
-
 interface Props {
   startDate: Date;
   endDate: Date;
   duration: string;
   unit: string;
   tasks: Task[];
+  milestones: Milestone[];
   totalDuration: string;
   holidayCountry: string;
   highlightedTaskId: number | null;
@@ -148,6 +156,7 @@ export default function DateWheel({
   duration,
   unit,
   tasks,
+  milestones,
   totalDuration,
   holidayCountry,
   highlightedTaskId,
@@ -245,11 +254,6 @@ export default function DateWheel({
 
     const minDist = Math.min(distToStart, distToEnd, closestBoundaryDist);
 
-    // Only activate gesture if touch is within 40px of a dot handle
-    // This allows normal scrolling everywhere else on the wheel
-    const ACTIVATION_RADIUS = 40;
-    if (minDist > ACTIVATION_RADIUS) return;
-
     if (minDist === closestBoundaryDist && closestBoundaryIndex >= 0) {
       dragTargetRef.current = closestBoundaryIndex;
       setActiveDot(closestBoundaryIndex);
@@ -308,30 +312,25 @@ export default function DateWheel({
     onDragActive(false);
     onDragEnd();
   }
-function handleTap(touchX: number, touchY: number) {
-    // Only process taps in the ring area
+
+  function handleTap(touchX: number, touchY: number) {
     const dx = touchX - R;
     const dy = touchY - R;
     const distance = Math.sqrt(dx * dx + dy * dy);
     if (distance < RING_RADIUS - 20 || distance > RING_RADIUS + 20) {
-      // Tapped outside ring — deselect
       onTaskTap(null);
       return;
     }
-
-    // Calculate angle of tap
     let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
     if (angle < 0) angle += 360;
     const tappedDay = Math.round((angle / 360) * TOTAL_DAYS);
 
-    // Check which task arc this falls on
     for (const task of tasks) {
       const ts = new Date(task.startDate);
       const te = new Date(task.endDate);
       const tStartDay = getDayOfYear(ts);
       const tEndDay = getDayOfYear(te);
       if (tappedDay >= tStartDay && tappedDay <= tEndDay) {
-        // Toggle — if already selected, deselect
         if (highlightedTaskId === task.id) {
           onTaskTap(null);
         } else {
@@ -340,7 +339,6 @@ function handleTap(touchX: number, touchY: number) {
         return;
       }
     }
-    // Tapped on active arc or empty — deselect
     onTaskTap(null);
   }
 
@@ -359,8 +357,10 @@ function handleTap(touchX: number, touchY: number) {
       <View style={[styles.container, { width: SIZE, height: SIZE }]}>
         <Svg width={SIZE} height={SIZE}>
 
+          {/* Background ring track */}
           <Circle cx={R} cy={R} r={RING_RADIUS} fill="none" stroke="#1C2B38" strokeWidth={36}/>
 
+          {/* Task arcs */}
           {tasks.map((task) => {
             const ts = new Date(task.startDate);
             const te = new Date(task.endDate);
@@ -376,7 +376,6 @@ function handleTap(touchX: number, touchY: number) {
               <React.Fragment key={task.id}>
                 {isHighlighted && (
                   <Path
-                    key={`glow-${task.id}`}
                     d={path}
                     fill="none"
                     stroke={color}
@@ -385,7 +384,6 @@ function handleTap(touchX: number, touchY: number) {
                   />
                 )}
                 <Path
-                  key={task.id}
                   d={path}
                   fill="none"
                   stroke={color}
@@ -396,6 +394,7 @@ function handleTap(touchX: number, touchY: number) {
             ) : null;
           })}
 
+          {/* Active arc */}
           {activeArcPath !== '' && (
             <Path
               d={activeArcPath}
@@ -406,9 +405,11 @@ function handleTap(touchX: number, touchY: number) {
             />
           )}
 
+          {/* Ring borders */}
           <Circle cx={R} cy={R} r={RING_RADIUS + 18} fill="none" stroke="#2E7DBC" strokeWidth={1} strokeOpacity={0.4}/>
           <Circle cx={R} cy={R} r={RING_RADIUS - 18} fill="none" stroke="#2E7DBC" strokeWidth={1} strokeOpacity={0.4}/>
 
+          {/* Month labels */}
           {MONTHS.map((month, i) => {
             const midDay = monthStarts[i] + month.days / 2;
             const angle = dayToAngle(midDay);
@@ -429,6 +430,7 @@ function handleTap(touchX: number, touchY: number) {
             );
           })}
 
+          {/* Month dividers */}
           {monthStarts.map((dayStart, i) => {
             const angle = dayToAngle(dayStart);
             const inner = angleToXY(angle, RING_RADIUS - 16);
@@ -439,6 +441,7 @@ function handleTap(touchX: number, touchY: number) {
             );
           })}
 
+          {/* Holiday markers */}
           {holidayDays.map((dayNum, i) => {
             const angle = dayToAngle(dayNum);
             const inner = angleToXY(angle, RING_RADIUS - 14);
@@ -448,6 +451,7 @@ function handleTap(touchX: number, touchY: number) {
                 stroke="#EF4444" strokeWidth={2} strokeOpacity={0.7} strokeLinecap="round"/>
             );
           })}
+
           {/* Today marker */}
           {(() => {
             const todayDay = getDayOfYear(new Date());
@@ -475,8 +479,10 @@ function handleTap(touchX: number, touchY: number) {
             );
           })()}
 
+          {/* Center hub */}
           <Circle cx={R} cy={R} r={R - 80} fill="#0F1923" stroke="#2E7DBC" strokeWidth={1.5}/>
 
+          {/* Boundary dots between tasks */}
           {tasks.map((task, i) => {
             const te = new Date(task.endDate);
             const tEndDay = getDayOfYear(te);
@@ -500,6 +506,33 @@ function handleTap(touchX: number, touchY: number) {
             );
           })}
 
+          {/* Milestone diamonds — rendered on top of task arcs */}
+          {milestones.map((milestone) => {
+            const mDate = new Date(milestone.date);
+            const mDay = getDayOfYear(mDate);
+            const mAngle = dayToAngle(mDay);
+            const mXY = angleToXY(mAngle, RING_RADIUS);
+            const size = 10;
+            return (
+              <React.Fragment key={`ms-${milestone.id}`}>
+                <Circle
+                  cx={mXY.x} cy={mXY.y}
+                  r={18}
+                  fill={milestone.color}
+                  fillOpacity={0.15}
+                />
+                <Path
+                  d={`M ${mXY.x} ${mXY.y - size} L ${mXY.x + size} ${mXY.y} L ${mXY.x} ${mXY.y + size} L ${mXY.x - size} ${mXY.y} Z`}
+                  fill={milestone.color}
+                  stroke="#FFFFFF"
+                  strokeWidth={1.5}
+                  strokeOpacity={0.8}
+                />
+              </React.Fragment>
+            );
+          })}
+
+          {/* Start dot */}
           {activeDot === 'start' && (
             <Circle cx={startXY.x} cy={startXY.y} r={22} fill="#2E9BFF" fillOpacity={0.2}/>
           )}
@@ -509,6 +542,7 @@ function handleTap(touchX: number, touchY: number) {
             strokeWidth={activeDot === 'start' ? 2.5 : 1.5}
             strokeOpacity={activeDot === 'start' ? 0.9 : 0.4}/>
 
+          {/* End dot */}
           {activeDot === 'end' && (
             <Circle cx={endXY.x} cy={endXY.y} r={24} fill="#F0A500" fillOpacity={0.2}/>
           )}
@@ -521,7 +555,7 @@ function handleTap(touchX: number, touchY: number) {
 
         </Svg>
 
-        {/* Center content — current duration / unit / total duration */}
+        {/* Center content */}
         <View style={styles.centerContent} pointerEvents="box-none">
           {tasks.length > 0 && (
             <Text style={styles.centerTaskCount}>{tasks.length + 1} Tasks</Text>

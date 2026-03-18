@@ -1,6 +1,7 @@
-import DateWheel, { Task, TASK_COLORS } from "@/components/datewheel";
+import DateWheel, { Milestone, Task, TASK_COLORS } from "@/components/datewheel";
 import GanttChart from "@/components/GanttChart";
 import { businessDaysWithHolidays } from "@/components/holidays";
+import MilestoneModal from "@/components/MilestoneModal";
 import { useProStatus } from "@/components/ProContext";
 import ProModal from "@/components/ProModal";
 import SettingsModal, { AppSettings } from "@/components/SettingsModal";
@@ -53,6 +54,7 @@ function getDayName(date: Date) {
 }
 
 const UNITS = ["Days", "Weeks", "Months", "Business Days"];
+const MILESTONE_COLORS = ['#F0A500', '#EC4899', '#84CC16', '#2E9BFF', '#8B5CF6'];
 
 const DEFAULT_SETTINGS: AppSettings = {
   darkMode: true,
@@ -127,10 +129,12 @@ export default function Index() {
   const [saveVisible, setSaveVisible] = useState(false);
   const [ganttVisible, setGanttVisible] = useState(false);
   const [proModalVisible, setProModalVisible] = useState(false);
+  const [milestoneModalVisible, setMilestoneModalVisible] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [currentTaskName, setCurrentTaskName] = useState("Current Task");
   const [isDragging, setIsDragging] = useState(false);
   const [tappedTaskId, setTappedTaskId] = useState<number | null>(null);
@@ -154,6 +158,7 @@ export default function Index() {
 
   const timelineStart = tasks.length > 0 ? new Date(tasks[0].startDate) : startDate;
   const timelineEnd = endDate;
+
   const tappedTask = tappedTaskId !== null ? tasks.find(t => t.id === tappedTaskId) : null;
   const activeTaskStart = tappedTask ? new Date(tappedTask.startDate) : isDragging && dragDisplayDates ? dragDisplayDates.start : startDate;
   const activeTaskEnd = tappedTask ? new Date(tappedTask.endDate) : isDragging && dragDisplayDates ? dragDisplayDates.end : endDate;
@@ -162,6 +167,7 @@ export default function Index() {
   useEffect(() => {
     loadSettings();
     loadTasks();
+    loadMilestones();
   }, []);
 
   async function loadSettings() {
@@ -190,6 +196,16 @@ export default function Index() {
       setTasks([]);
       tasksRef.current = [];
     }
+  }
+
+  async function loadMilestones() {
+    try {
+      const stored = await AsyncStorage.getItem("milestones");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setMilestones(parsed);
+      }
+    } catch (e) {}
   }
 
   function setTasksSync(newTasks: Task[]) {
@@ -223,6 +239,7 @@ export default function Index() {
     const task = tasksRef.current[taskIndex];
     if (task) {
       setIsDragging(true);
+      setTappedTaskId(null);
       setDragDisplayDates({
         start: new Date(task.startDate),
         end: new Date(task.endDate),
@@ -234,6 +251,7 @@ export default function Index() {
   function handleEndDragStart() {
     takeSnapshot();
     setIsDragging(true);
+    setTappedTaskId(null);
     setDragDisplayDates({
       start: startDateRef.current,
       end: endDateRef.current,
@@ -244,10 +262,7 @@ export default function Index() {
   function handleDragEnd() {
     setIsDragging(false);
     setDragDisplayDates(null);
-    // Small delay lets React commit the final boundary position before snapshotting
-    setTimeout(() => {
-      takeSnapshot();
-    }, 50);
+    setTimeout(() => { takeSnapshot(); }, 50);
   }
 
   function handleDragActive(dragging: boolean) {
@@ -263,6 +278,7 @@ export default function Index() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   }
+
   async function handleBoundaryChange(taskIndex: number, newDate: Date) {
     const snapshot = taskSnapshotRef.current;
     if (!snapshot || snapshot.length === 0) return;
@@ -366,21 +382,14 @@ export default function Index() {
     setUnit(project.unit);
   }
 
-  // Pro gate — show upgrade modal if not Pro
   function requirePro(action: () => void) {
-    if (isPro) {
-      action();
-    } else {
-      setProModalVisible(true);
-    }
+    if (isPro) { action(); } else { setProModalVisible(true); }
   }
 
   function handleAddTask() {
     if (tasksRef.current.length === 0) {
-      // First task is always free
       setTaskNameVisible(true);
     } else {
-      // Multi-task requires Pro
       requirePro(() => setTaskNameVisible(true));
     }
   }
@@ -429,6 +438,20 @@ export default function Index() {
     setTaskNameVisible(false);
   }
 
+  async function confirmAddMilestone(name: string, date: Date) {
+    const newMilestone: Milestone = {
+      id: Date.now(),
+      name,
+      date: date.toISOString(),
+      color: MILESTONE_COLORS[milestones.length % MILESTONE_COLORS.length],
+    };
+    const updated = [...milestones, newMilestone];
+    setMilestones(updated);
+    await AsyncStorage.setItem("milestones", JSON.stringify(updated));
+    setMilestoneModalVisible(false);
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }
+
   async function deleteTask(id: number) {
     Alert.alert("Delete Task", "Remove this task?", [
       { text: "Cancel", style: "cancel" },
@@ -442,9 +465,23 @@ export default function Index() {
     ]);
   }
 
+  async function deleteMilestone(id: number) {
+    Alert.alert("Delete Milestone", "Remove this milestone?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete", style: "destructive",
+        onPress: async () => {
+          const updated = milestones.filter(m => m.id !== id);
+          setMilestones(updated);
+          await AsyncStorage.setItem("milestones", JSON.stringify(updated));
+        },
+      },
+    ]);
+  }
+
   function handleReset() {
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert("Reset", "Clear all tasks and reset dates?", [
+    Alert.alert("Reset", "Clear all tasks, milestones and reset dates?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Reset", style: "destructive",
@@ -457,7 +494,9 @@ export default function Index() {
           setUnit("Days");
           setUnitIndex(0);
           setCurrentTaskName("Current Task");
+          setMilestones([]);
           await saveTasks([]);
+          await AsyncStorage.removeItem("milestones");
         },
       },
     ]);
@@ -577,15 +616,16 @@ export default function Index() {
           duration={duration}
           unit={unit}
           tasks={tasks}
+          milestones={milestones}
           totalDuration={totalDuration}
           holidayCountry={isPro ? settings.holidayCountry : "NONE"}
+          highlightedTaskId={tappedTaskId}
           onUnitToggle={handleUnitToggle}
           onBoundaryDragStart={handleBoundaryDragStart}
           onBoundaryChange={handleBoundaryChange}
           onEndDragStart={handleEndDragStart}
           onDragEnd={handleDragEnd}
           onDragActive={handleDragActive}
-          highlightedTaskId={tappedTaskId}
           onTaskTap={handleTaskTap}
           onEndDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -619,17 +659,28 @@ export default function Index() {
           </View>
         </View>
 
-        {/* Add New Task */}
-        <TouchableOpacity
-          style={[styles.addTaskBtn, { borderLeftColor: currentTaskColor }]}
-          onPress={handleAddTask}
-        >
-          <View style={[styles.taskColorDot, { backgroundColor: currentTaskColor }]} />
-          <Text style={styles.addTaskText}>+ Add New Task</Text>
-          <Text style={styles.addTaskSub}>
-            {tasksRef.current.length === 0 ? `${duration} ${unit}` : isPro ? `${duration} ${unit}` : '🔒 Pro'}
-          </Text>
-        </TouchableOpacity>
+        {/* Add Task + Add Milestone row */}
+        <View style={styles.addRow}>
+          <TouchableOpacity
+            style={[styles.addTaskBtn, { borderLeftColor: currentTaskColor }]}
+            onPress={handleAddTask}
+          >
+            <View style={[styles.taskColorDot, { backgroundColor: currentTaskColor }]} />
+            <Text style={styles.addTaskText}>+ Task</Text>
+            <Text style={styles.addTaskSub}>
+              {tasksRef.current.length === 0 ? `${duration} ${unit}` : isPro ? `${duration} ${unit}` : '🔒'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addMilestoneBtn}
+            onPress={() => requirePro(() => setMilestoneModalVisible(true))}
+          >
+            <View style={styles.milestoneDiamond} />
+            <Text style={styles.addMilestoneText}>
+              {isPro ? '+ Milestone' : '🔒 Milestone'}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Unit Selector Modal */}
         <Modal visible={unitModalVisible} transparent={true} animationType="fade" onRequestClose={() => setUnitModalVisible(false)}>
@@ -727,9 +778,30 @@ export default function Index() {
             </View>
           </TouchableOpacity>
 
+          {/* Milestones */}
+          {milestones
+            .slice()
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+            .map((milestone) => (
+              <TouchableOpacity
+                key={milestone.id}
+                style={[styles.milestoneItem, { backgroundColor: theme.card }]}
+                onLongPress={() => deleteMilestone(milestone.id)}
+              >
+                <View style={[styles.milestoneColorBar, { backgroundColor: milestone.color }]} />
+                <View style={[styles.milestoneDiamondItem, { backgroundColor: milestone.color }]} />
+                <View style={styles.milestoneContent}>
+                  <Text style={[styles.milestoneName, { color: theme.text }]}>{milestone.name}</Text>
+                  <Text style={[styles.milestoneDate, { color: theme.muted }]}>
+                    {formatDate(new Date(milestone.date))} · {getDayName(new Date(milestone.date))}
+                  </Text>
+                </View>
+                <Text style={[styles.milestoneTag, { color: milestone.color }]}>◆</Text>
+              </TouchableOpacity>
+            ))}
+
           <Text style={[styles.savesHint, { color: theme.border }]}>Tap name to rename · Hold to delete</Text>
 
-          {/* Gantt — Pro only */}
           <TouchableOpacity
             style={[styles.ganttBtn, { borderColor: theme.border }]}
             onPress={() => requirePro(() => setGanttVisible(true))}
@@ -740,7 +812,6 @@ export default function Index() {
             </Text>
           </TouchableOpacity>
 
-          {/* Upgrade button for free users */}
           {!isPro && (
             <TouchableOpacity
               style={styles.upgradeBtn}
@@ -792,6 +863,11 @@ export default function Index() {
         onClose={() => setProModalVisible(false)}
         onSuccess={() => setProModalVisible(false)}
       />
+      <MilestoneModal
+        visible={milestoneModalVisible}
+        onConfirm={confirmAddMilestone}
+        onCancel={() => setMilestoneModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -802,13 +878,8 @@ const darkTheme = {
 };
 
 const lightTheme = {
-  bg: "#E8EDF2",
-  card: "#FFFFFF",
-  cardHighlight: "#D6E8FF",
-  text: "#0D1B2A",
-  muted: "#5A7A96",
-  accent: "#1A6FBF",
-  border: "#B0C8E0",
+  bg: "#E8EDF2", card: "#FFFFFF", cardHighlight: "#D6E8FF",
+  text: "#0D1B2A", muted: "#5A7A96", accent: "#1A6FBF", border: "#B0C8E0",
 };
 
 const styles = StyleSheet.create({
@@ -844,11 +915,15 @@ const styles = StyleSheet.create({
   taskDateField: { flex: 1, padding: 10, alignItems: "center" },
   taskDateLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1, marginBottom: 2 },
   taskDateValue: { fontSize: 13, fontWeight: "600" },
-  editHint: { fontSize: 14, color: "#5A7A96" },
-  addTaskBtn: { width: "100%", backgroundColor: "#1C2B38", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", borderLeftWidth: 4, marginBottom: 8 },
+  addRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
+  addTaskBtn: { flex: 2, backgroundColor: "#1C2B38", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", borderLeftWidth: 4 },
   taskColorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
   addTaskText: { fontSize: 15, fontWeight: "600", color: "#FFFFFF", flex: 1 },
   addTaskSub: { fontSize: 13, color: "#5A7A96" },
+  addMilestoneBtn: { flex: 1, backgroundColor: "#1C2B38", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderLeftWidth: 4, borderLeftColor: "#F0A500" },
+  milestoneDiamond: { width: 10, height: 10, backgroundColor: "#F0A500", transform: [{ rotate: "45deg" }] },
+  addMilestoneText: { fontSize: 13, fontWeight: "600", color: "#FFFFFF" },
+  editHint: { fontSize: 14, color: "#5A7A96" },
   taskSection: { width: "100%", marginTop: 16 },
   taskSectionTitle: { fontSize: 11, fontWeight: "600", letterSpacing: 1.5, marginBottom: 10 },
   taskItem: { borderRadius: 12, marginBottom: 8, flexDirection: "row", alignItems: "center", overflow: "hidden" },
@@ -860,6 +935,13 @@ const styles = StyleSheet.create({
   taskNum: { fontSize: 12, paddingRight: 12 },
   activeBadge: { backgroundColor: "#1A3A5C", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginRight: 8, borderWidth: 0.5, borderColor: "#2E7DBC" },
   activeBadgeText: { fontSize: 9, fontWeight: "600", color: "#2E9BFF", letterSpacing: 1 },
+  milestoneItem: { borderRadius: 12, marginBottom: 8, flexDirection: "row", alignItems: "center", overflow: "hidden", paddingVertical: 12, paddingRight: 12 },
+  milestoneColorBar: { width: 4, alignSelf: "stretch" },
+  milestoneDiamondItem: { width: 10, height: 10, marginHorizontal: 12, transform: [{ rotate: "45deg" }] },
+  milestoneContent: { flex: 1 },
+  milestoneName: { fontSize: 14, fontWeight: "600", marginBottom: 2 },
+  milestoneDate: { fontSize: 11 },
+  milestoneTag: { fontSize: 16, paddingLeft: 8 },
   savesHint: { fontSize: 11, textAlign: "center", marginTop: 8, marginBottom: 8 },
   ganttBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 12, borderWidth: 1, marginTop: 8 },
   ganttBtnIcon: { fontSize: 16 },
