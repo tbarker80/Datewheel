@@ -161,6 +161,7 @@ export default function Index() {
   const activeStartSnapshotRef = useRef<string>("");
   const activeEndSnapshotRef = useRef<string>("");
   const milestonesRef = useRef<Milestone[]>([]);
+  const savedTappedTaskIdRef = useRef<number | null>(null);
   const currentTaskNameRef = useRef<string>("Current Task");
 
   const duration = calcDuration(startDate, endDate, unit, settings.holidayCountry);
@@ -176,6 +177,9 @@ export default function Index() {
   const activeTaskStart = tappedTask ? new Date(tappedTask.startDate) : isDragging && dragDisplayDates ? dragDisplayDates.start : startDate;
   const activeTaskEnd = tappedTask ? new Date(tappedTask.endDate) : isDragging && dragDisplayDates ? dragDisplayDates.end : endDate;
   const activeTaskLabel = tappedTask ? tappedTask.name : isDragging && dragDisplayDates ? dragDisplayDates.label : currentTaskName;
+  const highlightedTaskDuration = tappedTask
+    ? calcDuration(new Date(tappedTask.startDate), new Date(tappedTask.endDate), unit, settings.holidayCountry)
+    : duration;
 
   useEffect(() => {
     loadSettings();
@@ -302,7 +306,6 @@ export default function Index() {
     const task = tasksRef.current[taskIndex];
     if (task) {
       setIsDragging(true);
-      setTappedTaskId(null);
       setDragDisplayDates({
         start: new Date(task.startDate),
         end: new Date(task.endDate),
@@ -315,7 +318,6 @@ export default function Index() {
     saveUndoSnapshot();
     takeSnapshot();
     setIsDragging(true);
-    setTappedTaskId(null);
     setDragDisplayDates({
       start: startDateRef.current,
       end: endDateRef.current,
@@ -523,6 +525,7 @@ export default function Index() {
   }
 
   function handleUnitToggle() {
+    savedTappedTaskIdRef.current = tappedTaskId;
     setUnitModalVisible(true);
   }
 
@@ -624,7 +627,7 @@ export default function Index() {
           <TouchableOpacity
             style={[styles.quickBtn, {
               backgroundColor: theme.card,
-              borderColor: canUndo ? theme.accent : theme.border,
+              borderColor: theme.border,
               opacity: canUndo ? 1 : 0.4,
             }]}
             onPress={handleUndo}
@@ -653,7 +656,7 @@ export default function Index() {
             <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineStart)}</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.dateField, { backgroundColor: theme.cardHighlight, borderWidth: 1, borderColor: theme.accent }]}
+            style={[styles.dateField, { backgroundColor: theme.card }]}
             onPress={() => openPicker("end")}
           >
             <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE END</Text>
@@ -673,6 +676,7 @@ export default function Index() {
           totalDuration={totalDuration}
           holidayCountry={isPro ? settings.holidayCountry : "NONE"}
           highlightedTaskId={tappedTaskId}
+          highlightedTaskDuration={highlightedTaskDuration}
           onUnitToggle={handleUnitToggle}
           onBoundaryDragStart={handleBoundaryDragStart}
           onBoundaryChange={handleBoundaryChange}
@@ -740,7 +744,14 @@ export default function Index() {
                 <TouchableOpacity
                   key={u}
                   style={[styles.modalOption, unit === u && styles.modalOptionActive]}
-                  onPress={() => { setUnit(u); setUnitIndex(UNITS.indexOf(u)); setUnitModalVisible(false); }}
+                  onPress={() => {
+  setUnit(u);
+  setUnitIndex(UNITS.indexOf(u));
+  setUnitModalVisible(false);
+  setTimeout(() => {
+    setTappedTaskId(savedTappedTaskIdRef.current);
+  }, 100);
+}}
                 >
                   <Text style={[styles.modalOptionText, unit === u && styles.modalOptionTextActive]}>{u}</Text>
                   {unit === u && <Text style={styles.modalCheck}>✓</Text>}

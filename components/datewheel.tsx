@@ -139,6 +139,7 @@ interface Props {
   totalDuration: string;
   holidayCountry: string;
   highlightedTaskId: number | null;
+  highlightedTaskDuration: string;
   onUnitToggle: () => void;
   onEndDateChange: (date: Date) => void;
   onStartDateChange: (date: Date) => void;
@@ -160,6 +161,7 @@ export default function DateWheel({
   totalDuration,
   holidayCountry,
   highlightedTaskId,
+  highlightedTaskDuration,
   onUnitToggle,
   onEndDateChange,
   onStartDateChange,
@@ -562,12 +564,7 @@ export default function DateWheel({
             <Text style={styles.centerTaskCount}>{tasks.length + 1} Tasks</Text>
           )}
           <Text style={styles.centerDuration}>
-            {highlightedTaskId !== null
-              ? (() => {
-                  const t = tasks.find(t => t.id === highlightedTaskId);
-                  return t ? t.duration : duration;
-                })()
-              : duration}
+            {highlightedTaskId !== null ? highlightedTaskDuration : duration}
           </Text>
           <Text style={styles.centerUnit} onPress={onUnitToggle}>
             {unit.toUpperCase()} ▾
