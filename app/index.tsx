@@ -55,12 +55,21 @@ function getDayName(date: Date) {
 
 const UNITS = ["Days", "Weeks", "Months", "Business Days"];
 const MILESTONE_COLORS = ['#F0A500', '#EC4899', '#84CC16', '#2E9BFF', '#8B5CF6'];
+const MAX_UNDO_LEVELS = 5;
 
 const DEFAULT_SETTINGS: AppSettings = {
   darkMode: true,
   hapticsEnabled: true,
   holidayCountry: "NONE",
 };
+
+interface UndoSnapshot {
+  tasks: Task[];
+  milestones: Milestone[];
+  startDate: string;
+  endDate: string;
+  currentTaskName: string;
+}
 
 function calcDuration(start: Date, end: Date, unit: string, holidayCountry: string) {
   if (end <= start) return "0";
@@ -143,6 +152,7 @@ export default function Index() {
     end: Date;
     label: string;
   } | null>(null);
+  const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
 
   const tasksRef = useRef<Task[]>([]);
   const startDateRef = useRef<Date>(today);
@@ -150,11 +160,14 @@ export default function Index() {
   const taskSnapshotRef = useRef<Task[]>([]);
   const activeStartSnapshotRef = useRef<string>("");
   const activeEndSnapshotRef = useRef<string>("");
+  const milestonesRef = useRef<Milestone[]>([]);
+  const currentTaskNameRef = useRef<string>("Current Task");
 
   const duration = calcDuration(startDate, endDate, unit, settings.holidayCountry);
   const totalDuration = calcTotalDuration(tasks, endDate, unit, settings.holidayCountry);
   const theme = settings.darkMode ? darkTheme : lightTheme;
   const currentTaskColor = TASK_COLORS[tasks.length % TASK_COLORS.length];
+  const canUndo = undoStack.length > 0;
 
   const timelineStart = tasks.length > 0 ? new Date(tasks[0].startDate) : startDate;
   const timelineEnd = endDate;
@@ -169,6 +182,47 @@ export default function Index() {
     loadTasks();
     loadMilestones();
   }, []);
+
+  // Push current state onto undo stack before any destructive action
+  function saveUndoSnapshot() {
+    const snapshot: UndoSnapshot = {
+      tasks: tasksRef.current.map(t => ({ ...t })),
+      milestones: milestonesRef.current.map(m => ({ ...m })),
+      startDate: startDateRef.current.toISOString(),
+      endDate: endDateRef.current.toISOString(),
+      currentTaskName: currentTaskNameRef.current,
+    };
+    setUndoStack(prev => {
+      const updated = [snapshot, ...prev];
+      return updated.slice(0, MAX_UNDO_LEVELS);
+    });
+  }
+
+  function handleUndo() {
+    if (undoStack.length === 0) return;
+    if (settings.hapticsEnabled) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    const [last, ...rest] = undoStack;
+    setUndoStack(rest);
+
+    // Restore all state
+    const restoredTasks = last.tasks;
+    const restoredMilestones = last.milestones;
+    const restoredStart = new Date(last.startDate);
+    const restoredEnd = new Date(last.endDate);
+    const restoredName = last.currentTaskName;
+
+    setTasksSync(restoredTasks);
+    setMilestonesSync(restoredMilestones);
+    setStartDateSync(restoredStart);
+    setEndDateSync(restoredEnd);
+    setCurrentTaskName(restoredName);
+    currentTaskNameRef.current = restoredName;
+
+    AsyncStorage.setItem("tasks", JSON.stringify(restoredTasks));
+    AsyncStorage.setItem("milestones", JSON.stringify(restoredMilestones));
+  }
 
   async function loadSettings() {
     try {
@@ -203,7 +257,10 @@ export default function Index() {
       const stored = await AsyncStorage.getItem("milestones");
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) setMilestones(parsed);
+        if (Array.isArray(parsed)) {
+          setMilestones(parsed);
+          milestonesRef.current = parsed;
+        }
       }
     } catch (e) {}
   }
@@ -211,6 +268,11 @@ export default function Index() {
   function setTasksSync(newTasks: Task[]) {
     setTasks(newTasks);
     tasksRef.current = newTasks;
+  }
+
+  function setMilestonesSync(newMilestones: Milestone[]) {
+    setMilestones(newMilestones);
+    milestonesRef.current = newMilestones;
   }
 
   function setStartDateSync(date: Date) {
@@ -235,6 +297,7 @@ export default function Index() {
   }
 
   function handleBoundaryDragStart(taskIndex: number) {
+    saveUndoSnapshot();
     takeSnapshot();
     const task = tasksRef.current[taskIndex];
     if (task) {
@@ -249,13 +312,14 @@ export default function Index() {
   }
 
   function handleEndDragStart() {
+    saveUndoSnapshot();
     takeSnapshot();
     setIsDragging(true);
     setTappedTaskId(null);
     setDragDisplayDates({
       start: startDateRef.current,
       end: endDateRef.current,
-      label: currentTaskName,
+      label: currentTaskNameRef.current,
     });
   }
 
@@ -314,74 +378,6 @@ export default function Index() {
     setEndDateSync(snapActiveEnd);
   }
 
-  async function shiftTasksToNewStart(newStart: Date) {
-    if (tasksRef.current.length === 0) { setStartDateSync(newStart); return; }
-    const firstTaskStart = new Date(tasksRef.current[0].startDate);
-    const shiftMs = newStart.getTime() - firstTaskStart.getTime();
-    const shiftDays = Math.round(shiftMs / (1000 * 60 * 60 * 24));
-    if (shiftDays === 0) return;
-    const shiftedTasks = tasksRef.current.map((task) => {
-      const newTaskStart = new Date(task.startDate);
-      const newTaskEnd = new Date(task.endDate);
-      newTaskStart.setDate(newTaskStart.getDate() + shiftDays);
-      newTaskEnd.setDate(newTaskEnd.getDate() + shiftDays);
-      return { ...task, startDate: newTaskStart.toISOString(), endDate: newTaskEnd.toISOString() };
-    });
-    await saveTasks(shiftedTasks);
-    const newActiveStart = new Date(startDateRef.current);
-    const newActiveEnd = new Date(endDateRef.current);
-    newActiveStart.setDate(newActiveStart.getDate() + shiftDays);
-    newActiveEnd.setDate(newActiveEnd.getDate() + shiftDays);
-    setStartDateSync(newActiveStart);
-    setEndDateSync(newActiveEnd);
-  }
-
-  async function handleSaveAsProject() {
-    const name = saveName.trim() || `Project ${new Date().toLocaleDateString()}`;
-    await saveProject(name, tasksRef.current, currentTaskName, unit, startDateRef.current, endDateRef.current);
-    setSaveName(""); setSaveVisible(false);
-    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert("Saved!", `"${name}" saved as a project.`);
-  }
-
-  async function handleSaveAsTemplate() {
-    const name = saveName.trim() || `Template ${new Date().toLocaleDateString()}`;
-    await saveTemplate(name, tasksRef.current, currentTaskName, unit);
-    setSaveName(""); setSaveVisible(false);
-    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert("Saved!", `"${name}" saved as a template.`);
-  }
-
-  function handleLoadTemplate(template: Template) {
-    const today = new Date();
-    const daysBetweenDates = (s: string, e: string) =>
-      Math.round((new Date(e).getTime() - new Date(s).getTime()) / (1000 * 60 * 60 * 24));
-    let currentStart = new Date(today);
-    const rebuiltTasks: Task[] = template.tasks.map((task) => {
-      const span = daysBetweenDates(task.startDate, task.endDate);
-      const newStart = new Date(currentStart);
-      const newEnd = new Date(currentStart);
-      newEnd.setDate(newEnd.getDate() + span);
-      currentStart = new Date(newEnd);
-      return { ...task, id: Date.now() + Math.random(), startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
-    });
-    saveTasks(rebuiltTasks);
-    const newEnd = new Date(currentStart);
-    newEnd.setDate(newEnd.getDate() + 30);
-    setStartDateSync(currentStart);
-    setEndDateSync(newEnd);
-    setCurrentTaskName(template.currentTaskName);
-    setUnit(template.unit);
-  }
-
-  function handleLoadProject(project: Project) {
-    saveTasks(project.tasks);
-    setStartDateSync(new Date(project.startDate));
-    setEndDateSync(new Date(project.endDate));
-    setCurrentTaskName(project.currentTaskName);
-    setUnit(project.unit);
-  }
-
   function requirePro(action: () => void) {
     if (isPro) { action(); } else { setProModalVisible(true); }
   }
@@ -407,6 +403,7 @@ export default function Index() {
   async function confirmRename(name: string) {
     if (editingTaskId === null) {
       setCurrentTaskName(name);
+      currentTaskNameRef.current = name;
     } else {
       const updated = tasksRef.current.map((t) =>
         t.id === editingTaskId ? { ...t, name } : t
@@ -418,10 +415,11 @@ export default function Index() {
   }
 
   async function confirmAddTask(name: string) {
+    saveUndoSnapshot();
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const newTask: Task = {
       id: Date.now(),
-      name: currentTaskName,
+      name: currentTaskNameRef.current,
       startDate: startDateRef.current.toISOString(),
       endDate: endDateRef.current.toISOString(),
       color: TASK_COLORS[tasksRef.current.length % TASK_COLORS.length],
@@ -431,6 +429,7 @@ export default function Index() {
     const updated = [...tasksRef.current, newTask];
     await saveTasks(updated);
     setCurrentTaskName(name);
+    currentTaskNameRef.current = name;
     const nextEnd = new Date(endDateRef.current);
     nextEnd.setDate(nextEnd.getDate() + 30);
     setStartDateSync(endDateRef.current);
@@ -439,14 +438,15 @@ export default function Index() {
   }
 
   async function confirmAddMilestone(name: string, date: Date) {
+    saveUndoSnapshot();
     const newMilestone: Milestone = {
       id: Date.now(),
       name,
       date: date.toISOString(),
-      color: MILESTONE_COLORS[milestones.length % MILESTONE_COLORS.length],
+      color: MILESTONE_COLORS[milestonesRef.current.length % MILESTONE_COLORS.length],
     };
-    const updated = [...milestones, newMilestone];
-    setMilestones(updated);
+    const updated = [...milestonesRef.current, newMilestone];
+    setMilestonesSync(updated);
     await AsyncStorage.setItem("milestones", JSON.stringify(updated));
     setMilestoneModalVisible(false);
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -458,6 +458,7 @@ export default function Index() {
       {
         text: "Delete", style: "destructive",
         onPress: async () => {
+          saveUndoSnapshot();
           const updated = tasksRef.current.filter((t) => t.id !== id);
           await saveTasks(updated);
         },
@@ -471,8 +472,9 @@ export default function Index() {
       {
         text: "Delete", style: "destructive",
         onPress: async () => {
-          const updated = milestones.filter(m => m.id !== id);
-          setMilestones(updated);
+          saveUndoSnapshot();
+          const updated = milestonesRef.current.filter(m => m.id !== id);
+          setMilestonesSync(updated);
           await AsyncStorage.setItem("milestones", JSON.stringify(updated));
         },
       },
@@ -486,6 +488,7 @@ export default function Index() {
       {
         text: "Reset", style: "destructive",
         onPress: async () => {
+          saveUndoSnapshot();
           const fresh = new Date();
           const future = new Date();
           future.setDate(fresh.getDate() + 30);
@@ -494,17 +497,13 @@ export default function Index() {
           setUnit("Days");
           setUnitIndex(0);
           setCurrentTaskName("Current Task");
-          setMilestones([]);
+          currentTaskNameRef.current = "Current Task";
+          setMilestonesSync([]);
           await saveTasks([]);
           await AsyncStorage.removeItem("milestones");
         },
       },
     ]);
-  }
-
-  function handleStartToday() {
-    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    shiftTasksToNewStart(new Date());
   }
 
   function openPicker(field: string) {
@@ -513,13 +512,10 @@ export default function Index() {
   }
 
   function handleConfirm(date: Date) {
+    saveUndoSnapshot();
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (pickingField === "start") {
-      if (tasksRef.current.length > 0) {
-        shiftTasksToNewStart(date);
-      } else {
-        setStartDateSync(date);
-      }
+      setStartDateSync(date);
     } else {
       setEndDateSync(date);
     }
@@ -528,6 +524,56 @@ export default function Index() {
 
   function handleUnitToggle() {
     setUnitModalVisible(true);
+  }
+
+  async function handleSaveAsProject() {
+    const name = saveName.trim() || `Project ${new Date().toLocaleDateString()}`;
+    await saveProject(name, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current);
+    setSaveName(""); setSaveVisible(false);
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert("Saved!", `"${name}" saved as a project.`);
+  }
+
+  async function handleSaveAsTemplate() {
+    const name = saveName.trim() || `Template ${new Date().toLocaleDateString()}`;
+    await saveTemplate(name, tasksRef.current, currentTaskNameRef.current, unit);
+    setSaveName(""); setSaveVisible(false);
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert("Saved!", `"${name}" saved as a template.`);
+  }
+
+  function handleLoadTemplate(template: Template) {
+    saveUndoSnapshot();
+    const today = new Date();
+    const daysBetweenDates = (s: string, e: string) =>
+      Math.round((new Date(e).getTime() - new Date(s).getTime()) / (1000 * 60 * 60 * 24));
+    let currentStart = new Date(today);
+    const rebuiltTasks: Task[] = template.tasks.map((task) => {
+      const span = daysBetweenDates(task.startDate, task.endDate);
+      const newStart = new Date(currentStart);
+      const newEnd = new Date(currentStart);
+      newEnd.setDate(newEnd.getDate() + span);
+      currentStart = new Date(newEnd);
+      return { ...task, id: Date.now() + Math.random(), startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
+    });
+    saveTasks(rebuiltTasks);
+    const newEnd = new Date(currentStart);
+    newEnd.setDate(newEnd.getDate() + 30);
+    setStartDateSync(currentStart);
+    setEndDateSync(newEnd);
+    setCurrentTaskName(template.currentTaskName);
+    currentTaskNameRef.current = template.currentTaskName;
+    setUnit(template.unit);
+  }
+
+  function handleLoadProject(project: Project) {
+    saveUndoSnapshot();
+    saveTasks(project.tasks);
+    setStartDateSync(new Date(project.startDate));
+    setEndDateSync(new Date(project.endDate));
+    setCurrentTaskName(project.currentTaskName);
+    currentTaskNameRef.current = project.currentTaskName;
+    setUnit(project.unit);
   }
 
   return (
@@ -573,13 +619,20 @@ export default function Index() {
           </TouchableOpacity>
         </View>
 
-        {/* Quick Actions */}
+        {/* Quick Actions — Undo replaces Start Today */}
         <View style={styles.quickRow}>
           <TouchableOpacity
-            style={[styles.quickBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={handleStartToday}
+            style={[styles.quickBtn, {
+              backgroundColor: theme.card,
+              borderColor: canUndo ? theme.accent : theme.border,
+              opacity: canUndo ? 1 : 0.4,
+            }]}
+            onPress={handleUndo}
+            disabled={!canUndo}
           >
-            <Text style={[styles.quickBtnText, { color: theme.accent }]}>Start → Today</Text>
+            <Text style={[styles.quickBtnText, { color: canUndo ? theme.accent : theme.muted }]}>
+              ↩ Undo
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.quickBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -634,11 +687,7 @@ export default function Index() {
           }}
           onStartDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            if (tasksRef.current.length > 0) {
-              shiftTasksToNewStart(date);
-            } else {
-              setStartDateSync(date);
-            }
+            setStartDateSync(date);
             setDragDisplayDates(prev => prev ? { ...prev, start: date } : null);
           }}
         />
