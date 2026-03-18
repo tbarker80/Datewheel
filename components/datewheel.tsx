@@ -241,6 +241,11 @@ export default function DateWheel({
 
     const minDist = Math.min(distToStart, distToEnd, closestBoundaryDist);
 
+    // Only activate gesture if touch is within 40px of a dot handle
+    // This allows normal scrolling everywhere else on the wheel
+    const ACTIVATION_RADIUS = 40;
+    if (minDist > ACTIVATION_RADIUS) return;
+
     if (minDist === closestBoundaryDist && closestBoundaryIndex >= 0) {
       dragTargetRef.current = closestBoundaryIndex;
       setActiveDot(closestBoundaryIndex);
@@ -378,6 +383,32 @@ export default function DateWheel({
                 stroke="#EF4444" strokeWidth={2} strokeOpacity={0.7} strokeLinecap="round"/>
             );
           })}
+          {/* Today marker */}
+          {(() => {
+            const todayDay = getDayOfYear(new Date());
+            const todayAngle = dayToAngle(todayDay);
+            const inner = angleToXY(todayAngle, RING_RADIUS - 18);
+            const outer = angleToXY(todayAngle, RING_RADIUS + 18);
+            const dotPos = angleToXY(todayAngle, RING_RADIUS);
+            return (
+              <>
+                <Line
+                  x1={inner.x} y1={inner.y}
+                  x2={outer.x} y2={outer.y}
+                  stroke="#F0A500"
+                  strokeWidth={2.5}
+                  strokeOpacity={0.9}
+                  strokeLinecap="round"
+                />
+                <Circle
+                  cx={dotPos.x} cy={dotPos.y}
+                  r={4}
+                  fill="#F0A500"
+                  fillOpacity={0.9}
+                />
+              </>
+            );
+          })()}
 
           <Circle cx={R} cy={R} r={R - 80} fill="#0F1923" stroke="#2E7DBC" strokeWidth={1.5}/>
 

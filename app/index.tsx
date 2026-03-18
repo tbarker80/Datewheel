@@ -792,8 +792,13 @@ const darkTheme = {
 };
 
 const lightTheme = {
-  bg: "#F0F4F8", card: "#FFFFFF", cardHighlight: "#E8F4FF",
-  text: "#1A2A3A", muted: "#7A95A8", accent: "#1A6FBF", border: "#D0DDE8",
+  bg: "#E8EDF2",
+  card: "#FFFFFF",
+  cardHighlight: "#D6E8FF",
+  text: "#0D1B2A",
+  muted: "#5A7A96",
+  accent: "#1A6FBF",
+  border: "#B0C8E0",
 };
 
 const styles = StyleSheet.create({

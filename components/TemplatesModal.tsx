@@ -11,6 +11,81 @@ import {
 } from "react-native";
 import { Task } from "./datewheel";
 
+const BUILT_IN_TEMPLATES: Template[] = [
+  {
+    id: -1,
+    name: "🏗️ Home Construction",
+    currentTaskName: "Closeout & Punch List",
+    unit: "Days",
+    createdAt: "",
+    tasks: [
+      { id: 1, name: "Planning & Permits", startDate: "2024-01-01", endDate: "2024-02-15", color: "#2E9BFF", duration: "45", unit: "Days" },
+      { id: 2, name: "Site Prep & Foundation", startDate: "2024-02-15", endDate: "2024-03-15", color: "#1DB8A0", duration: "28", unit: "Days" },
+      { id: 3, name: "Framing & Roofing", startDate: "2024-03-15", endDate: "2024-05-01", color: "#8B5CF6", duration: "47", unit: "Days" },
+      { id: 4, name: "Mechanical, Electrical & Plumbing", startDate: "2024-05-01", endDate: "2024-06-15", color: "#F97316", duration: "45", unit: "Days" },
+      { id: 5, name: "Insulation & Drywall", startDate: "2024-06-15", endDate: "2024-07-15", color: "#EC4899", duration: "30", unit: "Days" },
+      { id: 6, name: "Flooring, Cabinets & Fixtures", startDate: "2024-07-15", endDate: "2024-09-01", color: "#84CC16", duration: "47", unit: "Days" },
+      { id: 7, name: "Paint & Interior Finish", startDate: "2024-09-01", endDate: "2024-10-01", color: "#2E9BFF", duration: "30", unit: "Days" },
+    ],
+  },
+  {
+    id: -2,
+    name: "💻 Software Development",
+    currentTaskName: "Launch & Monitoring",
+    unit: "Days",
+    createdAt: "",
+    tasks: [
+      { id: 1, name: "Discovery & Requirements", startDate: "2024-01-01", endDate: "2024-01-15", color: "#2E9BFF", duration: "14", unit: "Days" },
+      { id: 2, name: "UI/UX Design", startDate: "2024-01-15", endDate: "2024-02-01", color: "#1DB8A0", duration: "17", unit: "Days" },
+      { id: 3, name: "Backend Development", startDate: "2024-02-01", endDate: "2024-03-15", color: "#8B5CF6", duration: "43", unit: "Days" },
+      { id: 4, name: "Frontend Development", startDate: "2024-03-01", endDate: "2024-04-15", color: "#F97316", duration: "45", unit: "Days" },
+      { id: 5, name: "QA & Testing", startDate: "2024-04-15", endDate: "2024-05-01", color: "#EC4899", duration: "16", unit: "Days" },
+      { id: 6, name: "Staging & Review", startDate: "2024-05-01", endDate: "2024-05-15", color: "#84CC16", duration: "14", unit: "Days" },
+    ],
+  },
+  {
+    id: -3,
+    name: "📣 Marketing Campaign",
+    currentTaskName: "Campaign Live",
+    unit: "Days",
+    createdAt: "",
+    tasks: [
+      { id: 1, name: "Strategy & Brief", startDate: "2024-01-01", endDate: "2024-01-14", color: "#2E9BFF", duration: "13", unit: "Days" },
+      { id: 2, name: "Creative Development", startDate: "2024-01-14", endDate: "2024-02-04", color: "#1DB8A0", duration: "21", unit: "Days" },
+      { id: 3, name: "Content Production", startDate: "2024-02-04", endDate: "2024-02-25", color: "#8B5CF6", duration: "21", unit: "Days" },
+      { id: 4, name: "Review & Approvals", startDate: "2024-02-25", endDate: "2024-03-07", color: "#F97316", duration: "10", unit: "Days" },
+      { id: 5, name: "Media Planning & Buying", startDate: "2024-03-07", endDate: "2024-03-21", color: "#EC4899", duration: "14", unit: "Days" },
+    ],
+  },
+  {
+    id: -4,
+    name: "🎉 Event Planning",
+    currentTaskName: "Event Day",
+    unit: "Days",
+    createdAt: "",
+    tasks: [
+      { id: 1, name: "Concept & Budget", startDate: "2024-01-01", endDate: "2024-01-21", color: "#2E9BFF", duration: "20", unit: "Days" },
+      { id: 2, name: "Venue & Vendor Booking", startDate: "2024-01-21", endDate: "2024-02-21", color: "#1DB8A0", duration: "31", unit: "Days" },
+      { id: 3, name: "Invitations & Marketing", startDate: "2024-02-21", endDate: "2024-03-14", color: "#8B5CF6", duration: "21", unit: "Days" },
+      { id: 4, name: "Logistics & Run of Show", startDate: "2024-03-14", endDate: "2024-03-28", color: "#F97316", duration: "14", unit: "Days" },
+      { id: 5, name: "Final Confirmations", startDate: "2024-03-28", endDate: "2024-04-04", color: "#EC4899", duration: "7", unit: "Days" },
+    ],
+  },
+  {
+    id: -5,
+    name: "🏭 Manufacturing Run",
+    currentTaskName: "Shipping & Delivery",
+    unit: "Days",
+    createdAt: "",
+    tasks: [
+      { id: 1, name: "Design & Engineering", startDate: "2024-01-01", endDate: "2024-02-01", color: "#2E9BFF", duration: "31", unit: "Days" },
+      { id: 2, name: "Material Procurement", startDate: "2024-02-01", endDate: "2024-03-01", color: "#1DB8A0", duration: "28", unit: "Days" },
+      { id: 3, name: "Prototype & Testing", startDate: "2024-03-01", endDate: "2024-03-22", color: "#8B5CF6", duration: "21", unit: "Days" },
+      { id: 4, name: "Production Run", startDate: "2024-03-22", endDate: "2024-05-01", color: "#F97316", duration: "40", unit: "Days" },
+      { id: 5, name: "Quality Control", startDate: "2024-05-01", endDate: "2024-05-15", color: "#EC4899", duration: "14", unit: "Days" },
+    ],
+  },
+];
 export interface Template {
   id: number;
   name: string;
@@ -258,7 +333,7 @@ export default function TemplatesModal({ visible, onClose, onLoadTemplate, onLoa
                 {loaded && templates.length === 0 && (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyIcon}>📋</Text>
-                    <Text style={styles.emptyTitle}>No templates yet</Text>
+                    <Text style={styles.emptyTitle}>No saved templates yet</Text>
                     <Text style={styles.emptySub}>
                       Tap Save → Save as Template to create a reusable project structure.
                     </Text>
@@ -288,6 +363,31 @@ export default function TemplatesModal({ visible, onClose, onLoadTemplate, onLoa
                     <Text style={styles.loadArrow}>↗</Text>
                   </TouchableOpacity>
                 ))}
+
+                {/* Built-in templates — always visible, cannot be deleted */}
+                <Text style={styles.builtInLabel}>EXAMPLE TEMPLATES</Text>
+                {BUILT_IN_TEMPLATES.map((template) => (
+                  <TouchableOpacity
+                    key={template.id}
+                    style={[styles.item, styles.builtInItem]}
+                    onPress={() => handleLoadTemplate(template)}
+                  >
+                    <View style={styles.itemLeft}>
+                      <Text style={styles.itemName}>{template.name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {template.tasks.length + 1} tasks · {template.unit}
+                      </Text>
+                      <View style={styles.taskPreview}>
+                        {template.tasks.slice(0, 5).map((task, i) => (
+                          <View key={i} style={[styles.taskDot, { backgroundColor: task.color }]} />
+                        ))}
+                      </View>
+                    </View>
+                    <Text style={styles.loadArrow}>↗</Text>
+                  </TouchableOpacity>
+                ))}
+
+                <Text style={styles.hint}>Tap to open · Hold to delete your templates</Text>
               </>
             )}
 
@@ -447,5 +547,18 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
     marginBottom: 8,
+  },
+  builtInLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#5A7A96",
+    letterSpacing: 1.5,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  builtInItem: {
+    borderColor: "#2E7DBC",
+    borderWidth: 0.5,
+    opacity: 0.85,
   },
 });
