@@ -15,7 +15,26 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.tbarker80.DateWheel"
+      "bundleIdentifier": "com.tbarker80.DateWheel",
+      "infoPlist": {
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Date Wheel Project",
+            "CFBundleTypeRole": "Editor",
+            "LSItemContentTypes": ["com.tbarker80.datewheel"]
+          }
+        ],
+        "UTExportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "com.tbarker80.datewheel",
+            "UTTypeDescription": "Date Wheel Project",
+            "UTTypeConformsTo": ["public.data"],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": ["datewheel"]
+            }
+          }
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +43,39 @@
       },
       "package": "com.tbarker80.DateWheel",
       "versionCode": 7,
-      "permissions": ["com.android.vending.BILLING"]
+      "permissions": ["com.android.vending.BILLING"],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "datewheel"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "mimeType": "application/octet-stream",
+              "pathPattern": ".*\\.datewheel"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "mimeType": "*/*",
+              "pathPattern": ".*\\.datewheel"
+            }
+          ],
+          "category": ["DEFAULT"]
+        }
+      ]
     },
     "plugins": [
       "expo-router",
@@ -36,7 +87,8 @@
           "imageWidth": 200
         }
       ],
-      "react-native-iap"
+      "react-native-iap",
+      "expo-screen-orientation"
     ],
     "extra": {
       "router": {},

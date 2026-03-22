@@ -27,6 +27,7 @@ import {
   View,
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
+import { registerDatewheelHandler } from './_layout';
 
 function daysBetween(start: Date, end: Date) {
   const diff = end.getTime() - start.getTime();
@@ -67,6 +68,16 @@ const DEFAULT_SETTINGS: AppSettings = {
   holidayCountry: "NONE",
 };
 
+interface DatewheelFile {
+  version: string;
+  exportedAt: string;
+  tasks: Task[];
+  milestones: Milestone[];
+  currentTaskName: string;
+  unit: string;
+  startDate: string;
+  endDate: string;
+}
 interface UndoSnapshot {
   tasks: Task[];
   milestones: Milestone[];
@@ -264,6 +275,63 @@ export default function Index() {
         }
       }
     } catch (e) {}
+  }
+  // Register handler for incoming .datewheel files
+  useEffect(() => {
+    registerDatewheelHandler((data: string) => {
+      try {
+        const file: DatewheelFile = JSON.parse(data);
+        Alert.alert(
+          '📂 Open Project?',
+          `Received a Date Wheel project. Open it now? This will replace your current work.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Open',
+              onPress: () => {
+                saveUndoSnapshot();
+                saveTasks(file.tasks || []);
+                setMilestonesSync(file.milestones || []);
+                setStartDateSync(new Date(file.startDate));
+                setEndDateSync(new Date(file.endDate));
+                setCurrentTaskName(file.currentTaskName || 'Current Task');
+                currentTaskNameRef.current = file.currentTaskName || 'Current Task';
+                setUnit(file.unit || 'Days');
+              },
+            },
+          ]
+        );
+      } catch (e) {
+        Alert.alert('Import failed', 'Could not read the Date Wheel file.');
+      }
+    });
+  }, []);
+
+  async function handleShareProject() {
+    try {
+      const file: DatewheelFile = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        tasks: tasksRef.current,
+        milestones: milestonesRef.current,
+        currentTaskName: currentTaskNameRef.current,
+        unit,
+        startDate: startDateRef.current.toISOString(),
+        endDate: endDateRef.current.toISOString(),
+      };
+      const json = JSON.stringify(file, null, 2);
+      const fileName = `${currentTaskNameRef.current.replace(/[^a-zA-Z0-9]/g, '_')}.datewheel`;
+      const filePath = `${FileSystem.cacheDirectory}${fileName}`;
+      await FileSystem.writeAsStringAsync(filePath, json, { encoding: 'utf8' as any });
+      await Sharing.shareAsync(filePath, {
+        mimeType: 'application/octet-stream',
+        dialogTitle: 'Share Date Wheel Project',
+        UTI: 'com.tbarker80.datewheel',
+      });
+      if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      Alert.alert('Share failed', 'Could not share the project file.');
+    }
   }
   async function requestReviewIfAppropriate(taskCount: number) {
     try {
@@ -1141,6 +1209,16 @@ export default function Index() {
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
+          <TouchableOpacity
+                style={[styles.saveOptionBtn, { marginBottom: 8 }]}
+                onPress={() => { setSaveVisible(false); handleShareProject(); }}
+              >
+                <Text style={styles.saveOptionIcon}>🔗</Text>
+                <View style={styles.saveOptionText}>
+                  <Text style={styles.saveOptionTitle}>Share Project File</Text>
+                  <Text style={styles.saveOptionSub}>Send to another Date Wheel user to import</Text>
+                </View>
+              </TouchableOpacity>
         </Modal>
 
         {/* Project Timeline */}
