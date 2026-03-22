@@ -238,7 +238,12 @@ export default function DateWheel({
     const dx = touchX - R;
     const dy = touchY - R;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    if (distance < R * 0.4 || distance > R) return;
+
+    // Only activate in the ring area
+    if (distance < R * 0.4 || distance > R) {
+      isDraggingRef.current = false;
+      return;
+    }
 
     const distToStart = dist(touchX, touchY, startXY.x, startXY.y);
     const distToEnd = dist(touchX, touchY, endXY.x, endXY.y);
@@ -255,6 +260,14 @@ export default function DateWheel({
     });
 
     const minDist = Math.min(distToStart, distToEnd, closestBoundaryDist);
+
+    // SCROLL FIX — only activate gesture if within 44px of a dot handle
+    // Anywhere else on the wheel allows normal scrolling
+    const ACTIVATION_RADIUS = 44;
+    if (minDist > ACTIVATION_RADIUS) {
+      isDraggingRef.current = false;
+      return;
+    }
 
     if (minDist === closestBoundaryDist && closestBoundaryIndex >= 0) {
       dragTargetRef.current = closestBoundaryIndex;
@@ -348,9 +361,12 @@ export default function DateWheel({
     .onEnd((e) => { runOnJS(handleTap)(e.x, e.y); });
 
   const panGesture = Gesture.Pan()
+    .activateAfterLongPress(0)
+    .minDistance(2)
     .onStart((e) => { runOnJS(handleDragStart)(e.x, e.y); })
     .onUpdate((e) => { runOnJS(handleDragUpdate)(e.x, e.y); })
-    .onEnd(() => { runOnJS(handleDragEnd)(); });
+    .onEnd(() => { runOnJS(handleDragEnd)(); })
+    .onFinalize(() => { runOnJS(handleDragEnd)(); });
 
   const ringGesture = Gesture.Race(tapGesture, panGesture);
 
