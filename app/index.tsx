@@ -8,7 +8,9 @@ import SettingsModal, { AppSettings } from "@/components/SettingsModal";
 import TaskNameModal from "@/components/TaskNameModal";
 import TemplatesModal, { Project, saveTemplate, Template } from "@/components/TemplatesModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from 'expo-file-system';
 import * as Haptics from "expo-haptics";
+import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -516,10 +518,23 @@ export default function Index() {
   function handleConfirm(date: Date) {
     saveUndoSnapshot();
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (pickingField === "start") {
-      setStartDateSync(date);
+    if (tappedTask) {
+      // Update the highlighted task's dates
+      const updated = tasksRef.current.map(t => {
+        if (t.id !== tappedTaskId) return t;
+        if (pickingField === "start") {
+          return { ...t, startDate: date.toISOString(), duration: String(daysBetween(date, new Date(t.endDate))) };
+        } else {
+          return { ...t, endDate: date.toISOString(), duration: String(daysBetween(new Date(t.startDate), date)) };
+        }
+      });
+      saveTasks(updated);
     } else {
-      setEndDateSync(date);
+      if (pickingField === "start") {
+        setStartDateSync(date);
+      } else {
+        setEndDateSync(date);
+      }
     }
     setPickerVisible(false);
   }
@@ -578,7 +593,68 @@ export default function Index() {
     currentTaskNameRef.current = project.currentTaskName;
     setUnit(project.unit);
   }
+  async function handleExportCSV() {
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
+    // Build CSV rows
+    const rows: string[] = [];
+
+    // Header
+    rows.push('Type,Name,Start Date,End Date,Duration,Unit');
+
+    // Tasks
+    tasksRef.current.forEach(task => {
+      rows.push([
+        'Task',
+        `"${task.name}"`,
+        formatDate(new Date(task.startDate)),
+        formatDate(new Date(task.endDate)),
+        task.duration,
+        task.unit,
+      ].join(','));
+    });
+
+    // Active current task
+    rows.push([
+      'Task',
+      `"${currentTaskNameRef.current}"`,
+      formatDate(startDateRef.current),
+      formatDate(endDateRef.current),
+      duration,
+      unit,
+    ].join(','));
+
+    // Milestones
+    milestonesRef.current.forEach(milestone => {
+      rows.push([
+        'Milestone',
+        `"${milestone.name}"`,
+        formatDate(new Date(milestone.date)),
+        formatDate(new Date(milestone.date)),
+        '',
+        '',
+      ].join(','));
+    });
+
+    const csv = rows.join('\n');
+    const fileName = `DateWheel_${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-')}.csv`;
+    const filePath = `${FileSystem.cacheDirectory}${fileName}`;
+
+    try {
+      await FileSystem.writeAsStringAsync(filePath, csv, {
+        encoding: 'utf8' as any,
+      });
+      await Sharing.shareAsync(filePath, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Export Date Wheel Project',
+        UTI: 'public.comma-separated-values-text',
+      });
+    } catch (e) {
+      Alert.alert('Export failed', 'Could not export the file. Please try again.');
+    }
+  }
+
+  
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <StatusBar barStyle={settings.darkMode ? "light-content" : "dark-content"} backgroundColor={theme.bg} />
@@ -696,20 +772,26 @@ export default function Index() {
           }}
         />
 
-        {/* Active task dates */}
+        {/* Active task dates — tappable */}
         <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
-          <View style={styles.taskDateField}>
+          <TouchableOpacity
+            style={styles.taskDateField}
+            onPress={() => openPicker("start")}
+          >
             <Text style={[styles.taskDateLabel, { color: theme.muted }]}>
               {activeTaskLabel.toUpperCase()} START
             </Text>
             <Text style={[styles.taskDateValue, { color: theme.text }]}>{formatDate(activeTaskStart)}</Text>
-          </View>
-          <View style={[styles.taskDateField, { borderLeftWidth: 0.5, borderLeftColor: theme.border }]}>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.taskDateField, { borderLeftWidth: 0.5, borderLeftColor: theme.border }]}
+            onPress={() => openPicker("end")}
+          >
             <Text style={[styles.taskDateLabel, { color: theme.muted }]}>
               {activeTaskLabel.toUpperCase()} END
             </Text>
             <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>{formatDate(activeTaskEnd)}</Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* Add Task + Add Milestone row */}
@@ -789,6 +871,16 @@ export default function Index() {
                 <View style={styles.saveOptionText}>
                   <Text style={styles.saveOptionTitle}>Save as Template</Text>
                   <Text style={styles.saveOptionSub}>Saves structure only — reuse for new projects</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.saveOptionBtn, { marginBottom: 8 }]}
+                onPress={() => { setSaveVisible(false); handleExportCSV(); }}
+              >
+                <Text style={styles.saveOptionIcon}>📤</Text>
+                <View style={styles.saveOptionText}>
+                  <Text style={styles.saveOptionTitle}>Export as CSV</Text>
+                  <Text style={styles.saveOptionSub}>Share with Excel, Sheets, MS Project & more</Text>
                 </View>
               </TouchableOpacity>
               <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveVisible(false); }}>
@@ -886,7 +978,7 @@ export default function Index() {
         <DateTimePickerModal
           isVisible={pickerVisible}
           mode="date"
-          date={pickingField === "start" ? startDate : endDate}
+          date={pickingField === "start" ? activeTaskStart : activeTaskEnd}
           onConfirm={handleConfirm}
           onCancel={() => setPickerVisible(false)}
         />
