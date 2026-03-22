@@ -10,6 +10,7 @@ import TemplatesModal, { Project, saveTemplate, Template } from "@/components/Te
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from 'expo-file-system';
 import * as Haptics from "expo-haptics";
+import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from "react";
 import {
@@ -163,8 +164,8 @@ export default function Index() {
   const activeStartSnapshotRef = useRef<string>("");
   const activeEndSnapshotRef = useRef<string>("");
   const milestonesRef = useRef<Milestone[]>([]);
-  const savedTappedTaskIdRef = useRef<number | null>(null);
   const currentTaskNameRef = useRef<string>("Current Task");
+  const savedTappedTaskIdRef = useRef<number | null>(null);
 
   const duration = calcDuration(startDate, endDate, unit, settings.holidayCountry);
   const totalDuration = calcTotalDuration(tasks, endDate, unit, settings.holidayCountry);
@@ -189,7 +190,6 @@ export default function Index() {
     loadMilestones();
   }, []);
 
-  // Push current state onto undo stack before any destructive action
   function saveUndoSnapshot() {
     const snapshot: UndoSnapshot = {
       tasks: tasksRef.current.map(t => ({ ...t })),
@@ -206,26 +206,20 @@ export default function Index() {
 
   function handleUndo() {
     if (undoStack.length === 0) return;
-    if (settings.hapticsEnabled) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const [last, ...rest] = undoStack;
     setUndoStack(rest);
-
-    // Restore all state
     const restoredTasks = last.tasks;
     const restoredMilestones = last.milestones;
     const restoredStart = new Date(last.startDate);
     const restoredEnd = new Date(last.endDate);
     const restoredName = last.currentTaskName;
-
     setTasksSync(restoredTasks);
     setMilestonesSync(restoredMilestones);
     setStartDateSync(restoredStart);
     setEndDateSync(restoredEnd);
     setCurrentTaskName(restoredName);
     currentTaskNameRef.current = restoredName;
-
     AsyncStorage.setItem("tasks", JSON.stringify(restoredTasks));
     AsyncStorage.setItem("milestones", JSON.stringify(restoredMilestones));
   }
@@ -519,7 +513,6 @@ export default function Index() {
     saveUndoSnapshot();
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (tappedTask) {
-      // Update the highlighted task's dates
       const updated = tasksRef.current.map(t => {
         if (t.id !== tappedTaskId) return t;
         if (pickingField === "start") {
@@ -560,6 +553,321 @@ export default function Index() {
     Alert.alert("Saved!", `"${name}" saved as a template.`);
   }
 
+  async function handleExportCSV() {
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const rows: string[] = [];
+    rows.push('Type,Name,Start Date,End Date,Duration,Unit');
+    tasksRef.current.forEach(task => {
+      rows.push([
+        'Task',
+        `"${task.name}"`,
+        formatDate(new Date(task.startDate)),
+        formatDate(new Date(task.endDate)),
+        task.duration,
+        task.unit,
+      ].join(','));
+    });
+    rows.push([
+      'Task',
+      `"${currentTaskNameRef.current}"`,
+      formatDate(startDateRef.current),
+      formatDate(endDateRef.current),
+      duration,
+      unit,
+    ].join(','));
+    milestonesRef.current.forEach(milestone => {
+      rows.push([
+        'Milestone',
+        `"${milestone.name}"`,
+        formatDate(new Date(milestone.date)),
+        formatDate(new Date(milestone.date)),
+        '',
+        '',
+      ].join(','));
+    });
+    const csv = rows.join('\n');
+    const fileName = `DateWheel_${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-')}.csv`;
+    const filePath = `${FileSystem.cacheDirectory}${fileName}`;
+    try {
+      await FileSystem.writeAsStringAsync(filePath, csv, { encoding: 'utf8' as any });
+      await Sharing.shareAsync(filePath, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Export Date Wheel Project',
+        UTI: 'public.comma-separated-values-text',
+      });
+    } catch (e) {
+      Alert.alert('Export failed', 'Could not export the file. Please try again.');
+    }
+  }
+
+  async function handleExportPDF() {
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    const allTasks = [
+      ...tasksRef.current,
+      {
+        id: -1,
+        name: currentTaskNameRef.current,
+        startDate: startDateRef.current.toISOString(),
+        endDate: endDateRef.current.toISOString(),
+        color: currentTaskColor,
+        duration,
+        unit,
+      },
+    ];
+
+    // SVG wheel generator
+    const SVG_SIZE = 400;
+    const R = SVG_SIZE / 2;
+    const RING_R = R - 24;
+    const TOTAL_DAYS = 365;
+
+    const MONTHS = [
+      { name: 'Jan', days: 31 }, { name: 'Feb', days: 28 }, { name: 'Mar', days: 31 },
+      { name: 'Apr', days: 30 }, { name: 'May', days: 31 }, { name: 'Jun', days: 30 },
+      { name: 'Jul', days: 31 }, { name: 'Aug', days: 31 }, { name: 'Sep', days: 30 },
+      { name: 'Oct', days: 31 }, { name: 'Nov', days: 30 }, { name: 'Dec', days: 31 },
+    ];
+
+    function dayToAngle(day: number) { return (day / TOTAL_DAYS) * 360 - 90; }
+    function angleToXY(deg: number, radius: number) {
+      const rad = (deg * Math.PI) / 180;
+      return { x: R + radius * Math.cos(rad), y: R + radius * Math.sin(rad) };
+    }
+    function getDOY(date: Date) {
+      const start = new Date(date.getFullYear(), 0, 0);
+      return Math.floor((date.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+    }
+    function buildArc(startDay: number, endDay: number): string {
+      const spanDays = endDay - startDay;
+      if (spanDays <= 0 || spanDays >= TOTAL_DAYS) return '';
+      const sa = dayToAngle(startDay);
+      const ea = dayToAngle(endDay);
+      const s = angleToXY(sa, RING_R);
+      const e = angleToXY(ea, RING_R);
+      const large = ((spanDays / TOTAL_DAYS) * 360) > 180 ? 1 : 0;
+      return `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} A ${RING_R} ${RING_R} 0 ${large} 1 ${e.x.toFixed(1)} ${e.y.toFixed(1)}`;
+    }
+
+    // Month labels and dividers
+    let monthStarts: number[] = [];
+    let running = 0;
+    MONTHS.forEach(m => { monthStarts.push(running); running += m.days; });
+
+    const monthDividers = monthStarts.map(dayStart => {
+      const angle = dayToAngle(dayStart);
+      const inner = angleToXY(angle, RING_R - 14);
+      const outer = angleToXY(angle, RING_R + 14);
+      return `<line x1="${inner.x.toFixed(1)}" y1="${inner.y.toFixed(1)}" x2="${outer.x.toFixed(1)}" y2="${outer.y.toFixed(1)}" stroke="#2E7DBC" stroke-width="0.5" stroke-opacity="0.5"/>`;
+    }).join('');
+
+    const monthLabels = MONTHS.map((month, i) => {
+      const midDay = monthStarts[i] + month.days / 2;
+      const angle = dayToAngle(midDay);
+      const pos = angleToXY(angle, RING_R - 38);
+      const rotation = angle + 90;
+      return `<text x="${pos.x.toFixed(1)}" y="${pos.y.toFixed(1)}" font-size="9" font-weight="600" fill="#8AAFC4" text-anchor="middle" dominant-baseline="middle" transform="rotate(${rotation.toFixed(1)}, ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})">${month.name}</text>`;
+    }).join('');
+
+    // Task arcs
+    const taskArcs = allTasks.map(task => {
+      const ts = new Date(task.startDate);
+      const te = new Date(task.endDate);
+      const path = buildArc(getDOY(ts), getDOY(te));
+      if (!path) return '';
+      return `<path d="${path}" fill="none" stroke="${task.color}" stroke-width="28" stroke-opacity="${task.id === -1 ? '0.85' : '0.7'}" stroke-linecap="butt"/>`;
+    }).join('');
+
+    // Boundary dots
+    const boundaryDots = tasksRef.current.map(task => {
+      const te = new Date(task.endDate);
+      const angle = dayToAngle(getDOY(te));
+      const pos = angleToXY(angle, RING_R);
+      return `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="6" fill="${task.color}" stroke="white" stroke-width="1.5" stroke-opacity="0.6"/>`;
+    }).join('');
+
+    // Start dot
+    const startAngle = dayToAngle(getDOY(startDateRef.current));
+    const startPos = angleToXY(startAngle, RING_R);
+    const startDot = `<circle cx="${startPos.x.toFixed(1)}" cy="${startPos.y.toFixed(1)}" r="8" fill="#2E9BFF" stroke="white" stroke-width="1.5" stroke-opacity="0.6"/>`;
+
+    // End dot
+    const endAngle = dayToAngle(getDOY(endDateRef.current));
+    const endPos = angleToXY(endAngle, RING_R);
+    const endDot = `<circle cx="${endPos.x.toFixed(1)}" cy="${endPos.y.toFixed(1)}" r="10" fill="#F0A500" fill-opacity="0.9" stroke="white" stroke-width="1.5" stroke-opacity="0.6"/>`;
+
+    // Today marker
+    const todayAngle = dayToAngle(getDOY(new Date()));
+    const todayInner = angleToXY(todayAngle, RING_R - 14);
+    const todayOuter = angleToXY(todayAngle, RING_R + 14);
+    const todayDotPos = angleToXY(todayAngle, RING_R);
+    const todayMarker = `
+      <line x1="${todayInner.x.toFixed(1)}" y1="${todayInner.y.toFixed(1)}" x2="${todayOuter.x.toFixed(1)}" y2="${todayOuter.y.toFixed(1)}" stroke="#F0A500" stroke-width="2" stroke-opacity="0.9" stroke-linecap="round"/>
+      <circle cx="${todayDotPos.x.toFixed(1)}" cy="${todayDotPos.y.toFixed(1)}" r="3" fill="#F0A500" fill-opacity="0.9"/>
+    `;
+
+    // Milestone diamonds
+    const milestoneSVG = milestonesRef.current.map(m => {
+      const angle = dayToAngle(getDOY(new Date(m.date)));
+      const pos = angleToXY(angle, RING_R - 18);
+      const size = 5;
+      return `<polygon points="${pos.x},${(pos.y - size).toFixed(1)} ${(pos.x + size).toFixed(1)},${pos.y} ${pos.x},${(pos.y + size).toFixed(1)} ${(pos.x - size).toFixed(1)},${pos.y}" fill="${m.color}" stroke="white" stroke-width="1"/>`;
+    }).join('');
+
+    // Center hub
+    const hubRadius = R - 72;
+    const centerText = `
+      <circle cx="${R}" cy="${R}" r="${hubRadius}" fill="#0F1923" stroke="#2E7DBC" stroke-width="1.5"/>
+      <text x="${R}" y="${R - 18}" font-size="32" font-weight="700" fill="white" text-anchor="middle" dominant-baseline="middle">${totalDuration || duration}</text>
+      <text x="${R}" y="${R + 14}" font-size="11" font-weight="600" fill="#2E9BFF" text-anchor="middle" dominant-baseline="middle" letter-spacing="2">${unit.toUpperCase()}</text>
+      ${totalDuration ? `<text x="${R}" y="${R + 36}" font-size="10" fill="#5A7A96" text-anchor="middle" dominant-baseline="middle">TOTAL</text>` : ''}
+    `;
+
+    const wheelSVG = `
+      <svg width="${SVG_SIZE}" height="${SVG_SIZE}" xmlns="http://www.w3.org/2000/svg" style="background:#0F1923; border-radius:50%;">
+        <circle cx="${R}" cy="${R}" r="${RING_R}" fill="none" stroke="#1C2B38" stroke-width="28"/>
+        ${taskArcs}
+        <circle cx="${R}" cy="${R}" r="${RING_R + 14}" fill="none" stroke="#2E7DBC" stroke-width="0.5" stroke-opacity="0.4"/>
+        <circle cx="${R}" cy="${R}" r="${RING_R - 14}" fill="none" stroke="#2E7DBC" stroke-width="0.5" stroke-opacity="0.4"/>
+        ${monthDividers}
+        ${monthLabels}
+        ${todayMarker}
+        ${centerText}
+        ${boundaryDots}
+        ${milestoneSVG}
+        ${startDot}
+        ${endDot}
+      </svg>
+    `;
+
+    // Task rows
+    const taskRows = allTasks.map((task, i) => `
+      <tr style="background: ${i % 2 === 0 ? '#f8fafc' : '#ffffff'}">
+        <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 12px; height: 12px; border-radius: 50%; background: ${task.color}; flex-shrink: 0;"></div>
+            <span style="font-weight: 600; color: #0d1b2a;">${task.name}${task.id === -1 ? ' <span style="background:#1a6fbf;color:white;font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">ACTIVE</span>' : ''}</span>
+          </div>
+        </td>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${formatDate(new Date(task.startDate))}</td>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${formatDate(new Date(task.endDate))}</td>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: ${task.color};">${task.duration} ${task.unit}</td>
+      </tr>
+    `).join('');
+
+    const milestoneRows = milestonesRef.current.length > 0 ? `
+      <h2 style="font-size: 14px; font-weight: 700; color: #5a7a96; letter-spacing: 2px; margin: 32px 0 12px 0; text-transform: uppercase;">Milestones</h2>
+      <table style="width: 100%; border-collapse: collapse; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08);">
+        <thead>
+          <tr style="background: #1a6fbf;">
+            <th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px; letter-spacing: 1px;">MILESTONE</th>
+            <th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px; letter-spacing: 1px;">DATE</th>
+            <th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px; letter-spacing: 1px;">DAY</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${milestonesRef.current.map((m, i) => `
+            <tr style="background: ${i % 2 === 0 ? '#f8fafc' : '#ffffff'}">
+              <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 10px; height: 10px; background: ${m.color}; transform: rotate(45deg); flex-shrink: 0;"></div>
+                  <span style="font-weight: 600; color: #0d1b2a;">${m.name}</span>
+                </div>
+              </td>
+              <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${formatDate(new Date(m.date))}</td>
+              <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${getDayName(new Date(m.date))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    ` : '';
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>* { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff; color: #0d1b2a; padding: 40px; }</style>
+      </head>
+      <body>
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #e2e8f0;">
+          <div>
+            <div style="font-size: 28px; font-weight: 800; letter-spacing: 2px; margin-bottom: 4px;">
+              <span style="color: #0d1b2a;">DATE</span><span style="color: #1a6fbf;">WHEEL</span>
+            </div>
+            <div style="font-size: 13px; color: #5a7a96;">Project Timeline Report</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 12px; color: #5a7a96;">Generated ${formatDate(new Date())}</div>
+          </div>
+        </div>
+
+        <!-- Wheel + Summary side by side -->
+        <div style="display: flex; gap: 32px; align-items: center; margin-bottom: 32px;">
+          <div style="flex-shrink: 0;">
+            ${wheelSVG}
+          </div>
+          <div style="flex: 1;">
+            <div style="margin-bottom: 16px; background: #f0f7ff; border-radius: 12px; padding: 16px; border-left: 4px solid #1a6fbf;">
+              <div style="font-size: 10px; font-weight: 700; color: #5a7a96; letter-spacing: 1.5px; margin-bottom: 6px;">TIMELINE START</div>
+              <div style="font-size: 16px; font-weight: 700; color: #0d1b2a;">${formatDate(timelineStart)}</div>
+              <div style="font-size: 12px; color: #5a7a96;">${getDayName(timelineStart)}</div>
+            </div>
+            <div style="margin-bottom: 16px; background: #f0f7ff; border-radius: 12px; padding: 16px; border-left: 4px solid #1a6fbf;">
+              <div style="font-size: 10px; font-weight: 700; color: #5a7a96; letter-spacing: 1.5px; margin-bottom: 6px;">TIMELINE END</div>
+              <div style="font-size: 16px; font-weight: 700; color: #0d1b2a;">${formatDate(timelineEnd)}</div>
+              <div style="font-size: 12px; color: #5a7a96;">${getDayName(timelineEnd)}</div>
+            </div>
+            <div style="background: #f0f7ff; border-radius: 12px; padding: 16px; border-left: 4px solid #1a6fbf;">
+              <div style="font-size: 10px; font-weight: 700; color: #5a7a96; letter-spacing: 1.5px; margin-bottom: 6px;">TOTAL DURATION</div>
+              <div style="font-size: 16px; font-weight: 700; color: #1a6fbf;">${totalDuration || duration} ${unit}</div>
+              <div style="font-size: 12px; color: #5a7a96;">${allTasks.length} tasks${milestonesRef.current.length > 0 ? ` · ${milestonesRef.current.length} milestones` : ''}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tasks table -->
+        <h2 style="font-size: 14px; font-weight: 700; color: #5a7a96; letter-spacing: 2px; margin-bottom: 12px; text-transform: uppercase;">Project Tasks</h2>
+        <table style="width: 100%; border-collapse: collapse; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08);">
+          <thead>
+            <tr style="background: #1a6fbf;">
+              <th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px; letter-spacing: 1px;">TASK</th>
+              <th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px; letter-spacing: 1px;">START</th>
+              <th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px; letter-spacing: 1px;">END</th>
+              <th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px; letter-spacing: 1px;">DURATION</th>
+            </tr>
+          </thead>
+          <tbody>${taskRows}</tbody>
+        </table>
+
+        ${milestoneRows}
+
+        <!-- Footer -->
+        <div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-size: 11px; color: #b0c8e0;">Created with Date Wheel</div>
+          <div style="font-size: 11px; color: #b0c8e0;">${formatDate(new Date())}</div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    try {
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      const fileName = `DateWheel_${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-')}.pdf`;
+      const destPath = `${FileSystem.cacheDirectory}${fileName}`;
+      await FileSystem.moveAsync({ from: uri, to: destPath });
+      await Sharing.shareAsync(destPath, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Export Date Wheel Project as PDF',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (e) {
+      Alert.alert('Export failed', 'Could not generate the PDF. Please try again.');
+    }
+  }
+
   function handleLoadTemplate(template: Template) {
     saveUndoSnapshot();
     const today = new Date();
@@ -593,68 +901,7 @@ export default function Index() {
     currentTaskNameRef.current = project.currentTaskName;
     setUnit(project.unit);
   }
-  async function handleExportCSV() {
-    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    // Build CSV rows
-    const rows: string[] = [];
-
-    // Header
-    rows.push('Type,Name,Start Date,End Date,Duration,Unit');
-
-    // Tasks
-    tasksRef.current.forEach(task => {
-      rows.push([
-        'Task',
-        `"${task.name}"`,
-        formatDate(new Date(task.startDate)),
-        formatDate(new Date(task.endDate)),
-        task.duration,
-        task.unit,
-      ].join(','));
-    });
-
-    // Active current task
-    rows.push([
-      'Task',
-      `"${currentTaskNameRef.current}"`,
-      formatDate(startDateRef.current),
-      formatDate(endDateRef.current),
-      duration,
-      unit,
-    ].join(','));
-
-    // Milestones
-    milestonesRef.current.forEach(milestone => {
-      rows.push([
-        'Milestone',
-        `"${milestone.name}"`,
-        formatDate(new Date(milestone.date)),
-        formatDate(new Date(milestone.date)),
-        '',
-        '',
-      ].join(','));
-    });
-
-    const csv = rows.join('\n');
-    const fileName = `DateWheel_${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-')}.csv`;
-    const filePath = `${FileSystem.cacheDirectory}${fileName}`;
-
-    try {
-      await FileSystem.writeAsStringAsync(filePath, csv, {
-        encoding: 'utf8' as any,
-      });
-      await Sharing.shareAsync(filePath, {
-        mimeType: 'text/csv',
-        dialogTitle: 'Export Date Wheel Project',
-        UTI: 'public.comma-separated-values-text',
-      });
-    } catch (e) {
-      Alert.alert('Export failed', 'Could not export the file. Please try again.');
-    }
-  }
-
-  
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <StatusBar barStyle={settings.darkMode ? "light-content" : "dark-content"} backgroundColor={theme.bg} />
@@ -691,27 +938,20 @@ export default function Index() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.saveTemplateBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => requirePro(() => setSaveVisible(true))}
+            onPress={() => setSaveVisible(true)}
           >
             <Text style={[styles.templateBtnText, { color: theme.accent }]}>Save</Text>
-            {!isPro && <Text style={styles.lockIconSmall}>🔒</Text>}
           </TouchableOpacity>
         </View>
 
-        {/* Quick Actions — Undo replaces Start Today */}
+        {/* Quick Actions */}
         <View style={styles.quickRow}>
           <TouchableOpacity
-            style={[styles.quickBtn, {
-              backgroundColor: theme.card,
-              borderColor: theme.border,
-              opacity: canUndo ? 1 : 0.4,
-            }]}
+            style={[styles.quickBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 0.4 }]}
             onPress={handleUndo}
             disabled={!canUndo}
           >
-            <Text style={[styles.quickBtnText, { color: canUndo ? theme.accent : theme.muted }]}>
-              ↩ Undo
-            </Text>
+            <Text style={[styles.quickBtnText, { color: canUndo ? theme.accent : theme.muted }]}>↩ Undo</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.quickBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -772,12 +1012,9 @@ export default function Index() {
           }}
         />
 
-        {/* Active task dates — tappable */}
+        {/* Active task dates */}
         <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
-          <TouchableOpacity
-            style={styles.taskDateField}
-            onPress={() => openPicker("start")}
-          >
+          <TouchableOpacity style={styles.taskDateField} onPress={() => openPicker("start")}>
             <Text style={[styles.taskDateLabel, { color: theme.muted }]}>
               {activeTaskLabel.toUpperCase()} START
             </Text>
@@ -827,13 +1064,11 @@ export default function Index() {
                   key={u}
                   style={[styles.modalOption, unit === u && styles.modalOptionActive]}
                   onPress={() => {
-  setUnit(u);
-  setUnitIndex(UNITS.indexOf(u));
-  setUnitModalVisible(false);
-  setTimeout(() => {
-    setTappedTaskId(savedTappedTaskIdRef.current);
-  }, 100);
-}}
+                    setUnit(u);
+                    setUnitIndex(UNITS.indexOf(u));
+                    setUnitModalVisible(false);
+                    setTimeout(() => { setTappedTaskId(savedTappedTaskIdRef.current); }, 100);
+                  }}
                 >
                   <Text style={[styles.modalOptionText, unit === u && styles.modalOptionTextActive]}>{u}</Text>
                   {unit === u && <Text style={styles.modalCheck}>✓</Text>}
@@ -847,11 +1082,11 @@ export default function Index() {
         <Modal visible={saveVisible} transparent={true} animationType="fade" onRequestClose={() => setSaveVisible(false)}>
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSaveVisible(false)}>
             <View style={styles.modalBox}>
-              <Text style={styles.modalTitle}>SAVE</Text>
+              <Text style={styles.modalTitle}>SAVE & EXPORT</Text>
               <View style={styles.templateInputWrapper}>
                 <TextInput
                   style={styles.templateInput}
-                  placeholder="Name..."
+                  placeholder="Project name..."
                   placeholderTextColor="#2A3F52"
                   value={saveName}
                   onChangeText={setSaveName}
@@ -866,21 +1101,25 @@ export default function Index() {
                   <Text style={styles.saveOptionSub}>Saves actual dates — open and continue later</Text>
                 </View>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.saveOptionBtn, { marginBottom: 8 }]} onPress={handleSaveAsTemplate}>
+              <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsTemplate}>
                 <Text style={styles.saveOptionIcon}>📋</Text>
                 <View style={styles.saveOptionText}>
                   <Text style={styles.saveOptionTitle}>Save as Template</Text>
                   <Text style={styles.saveOptionSub}>Saves structure only — reuse for new projects</Text>
                 </View>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveOptionBtn, { marginBottom: 8 }]}
-                onPress={() => { setSaveVisible(false); handleExportCSV(); }}
-              >
+              <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportCSV(); }}>
                 <Text style={styles.saveOptionIcon}>📤</Text>
                 <View style={styles.saveOptionText}>
                   <Text style={styles.saveOptionTitle}>Export as CSV</Text>
                   <Text style={styles.saveOptionSub}>Share with Excel, Sheets, MS Project & more</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.saveOptionBtn, { marginBottom: 8 }]} onPress={() => { setSaveVisible(false); handleExportPDF(); }}>
+                <Text style={styles.saveOptionIcon}>📄</Text>
+                <View style={styles.saveOptionText}>
+                  <Text style={styles.saveOptionTitle}>Export as PDF</Text>
+                  <Text style={styles.saveOptionSub}>Professional report with task summary</Text>
                 </View>
               </TouchableOpacity>
               <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveVisible(false); }}>
@@ -1050,7 +1289,6 @@ const styles = StyleSheet.create({
   gearBtn: { padding: 8 },
   gearIcon: { fontSize: 24, color: "#5A7A96" },
   lockIcon: { fontSize: 12, marginLeft: 4 },
-  lockIconSmall: { fontSize: 10, marginLeft: 2 },
   templateBanner: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
   templateBtn: { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 8, borderRadius: 10, borderWidth: 0.5 },
   saveTemplateBtn: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8, borderRadius: 10, borderWidth: 0.5, flexDirection: "row", gap: 4 },
@@ -1119,4 +1357,4 @@ const styles = StyleSheet.create({
   saveOptionSub: { fontSize: 11, color: "#5A7A96" },
   cancelTemplateBtn: { marginHorizontal: 12, marginBottom: 16, padding: 14, alignItems: "center" },
   cancelTemplateBtnText: { fontSize: 14, color: "#5A7A96" },
-});
+}); 
