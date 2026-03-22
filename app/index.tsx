@@ -12,6 +12,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Haptics from "expo-haptics";
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as StoreReview from 'expo-store-review';
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -264,6 +265,17 @@ export default function Index() {
       }
     } catch (e) {}
   }
+  async function requestReviewIfAppropriate(taskCount: number) {
+    try {
+      // Ask for review after user adds their 3rd task
+      if (taskCount === 3) {
+        const isAvailable = await StoreReview.isAvailableAsync();
+        if (isAvailable) {
+          await StoreReview.requestReview();
+        }
+      }
+    } catch (e) {}
+  }
 
   function setTasksSync(newTasks: Task[]) {
     setTasks(newTasks);
@@ -426,6 +438,8 @@ export default function Index() {
     };
     const updated = [...tasksRef.current, newTask];
     await saveTasks(updated);
+    await saveTasks(updated);
+    await requestReviewIfAppropriate(updated.length);
     setCurrentTaskName(name);
     currentTaskNameRef.current = name;
     const nextEnd = new Date(endDateRef.current);
