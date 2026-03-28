@@ -5,12 +5,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 
 interface Props {
   visible: boolean;
+  defaultDate?: Date;
   onConfirm: (name: string, date: Date) => void;
   onCancel: () => void;
 }
@@ -21,21 +22,29 @@ function formatDate(date: Date) {
   });
 }
 
-export default function MilestoneModal({ visible, onConfirm, onCancel }: Props) {
+export default function MilestoneModal({ visible, defaultDate, onConfirm, onCancel }: Props) {
   const [name, setName] = useState('');
-  const [date, setDate] = useState(new Date());
+  const [date, setDate] = useState(defaultDate || new Date());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
+
+  // Sync date when defaultDate changes
+  React.useEffect(() => {
+    if (visible) {
+      setDate(defaultDate || new Date());
+      setName('');
+    }
+  }, [visible, defaultDate]);
 
   function handleConfirm() {
     const finalName = name.trim() || 'Milestone';
     onConfirm(finalName, date);
     setName('');
-    setDate(new Date());
+    setDate(defaultDate || new Date());
   }
 
   function handleCancel() {
     setName('');
-    setDate(new Date());
+    setDate(defaultDate || new Date());
     onCancel();
   }
 
@@ -168,14 +177,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  dateText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-  },
-  dateArrow: {
-    fontSize: 14,
-    color: '#2E9BFF',
-  },
+  dateText: { fontSize: 16, color: '#FFFFFF' },
+  dateArrow: { fontSize: 14, color: '#2E9BFF' },
   previewRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -189,11 +192,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0A500',
     transform: [{ rotate: '45deg' }],
   },
-  previewText: {
-    fontSize: 13,
-    color: '#5A7A96',
-    flex: 1,
-  },
+  previewText: { fontSize: 13, color: '#5A7A96', flex: 1 },
   confirmBtn: {
     marginHorizontal: 12,
     marginBottom: 8,
@@ -202,19 +201,12 @@ const styles = StyleSheet.create({
     padding: 14,
     alignItems: 'center',
   },
-  confirmBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
+  confirmBtnText: { fontSize: 15, fontWeight: '600', color: '#FFFFFF' },
   cancelBtn: {
     marginHorizontal: 12,
     marginBottom: 16,
     padding: 14,
     alignItems: 'center',
   },
-  cancelBtnText: {
-    fontSize: 14,
-    color: '#5A7A96',
-  },
+  cancelBtnText: { fontSize: 14, color: '#5A7A96' },
 });

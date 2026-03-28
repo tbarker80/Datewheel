@@ -162,6 +162,7 @@ export default function Index() {
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [currentTaskName, setCurrentTaskName] = useState("Current Task");
   const [isDragging, setIsDragging] = useState(false);
+  const [renamingMilestone, setRenamingMilestone] = useState<Milestone | null>(null);
   const [tappedTaskId, setTappedTaskId] = useState<number | null>(null);
   const [dragDisplayDates, setDragDisplayDates] = useState<{
     start: Date;
@@ -169,6 +170,8 @@ export default function Index() {
     label: string;
   } | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
+  const [editingMilestoneId, setEditingMilestoneId] = useState<number | null>(null);
+  const [milestoneDatePickerVisible, setMilestoneDatePickerVisible] = useState(false);
 
   const tasksRef = useRef<Task[]>([]);
   const startDateRef = useRef<Date>(today);
@@ -540,18 +543,47 @@ export default function Index() {
   }
 
   async function deleteMilestone(id: number) {
-    Alert.alert("Delete Milestone", "Remove this milestone?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete", style: "destructive",
-        onPress: async () => {
-          saveUndoSnapshot();
-          const updated = milestonesRef.current.filter(m => m.id !== id);
-          setMilestonesSync(updated);
-          await AsyncStorage.setItem("milestones", JSON.stringify(updated));
+    const updated = milestonesRef.current.filter(m => m.id !== id);
+    saveUndoSnapshot();
+    setMilestonesSync(updated);
+    await AsyncStorage.setItem("milestones", JSON.stringify(updated));
+  }
+
+  function handleMilestoneLongPress(milestone: Milestone) {
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      milestone.name,
+      formatDate(new Date(milestone.date)),
+      [
+        {
+          text: 'Rename',
+          onPress: () => setRenamingMilestone(milestone),
         },
-      },
-    ]);
+        {
+          text: 'Change Date',
+          onPress: () => {
+            setEditingMilestoneId(milestone.id);
+            setMilestoneDatePickerVisible(true);
+          },
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteMilestone(milestone.id),
+        },
+      ]
+    );
+  }
+
+  async function confirmRenameMilestone(newName: string) {
+    if (!renamingMilestone) return;
+    saveUndoSnapshot();
+    const updated = milestonesRef.current.map(m =>
+      m.id === renamingMilestone.id ? { ...m, name: newName.trim() || m.name } : m
+    );
+    setMilestonesSync(updated);
+    await AsyncStorage.setItem("milestones", JSON.stringify(updated));
+    setRenamingMilestone(null);
   }
 
   function handleReset() {
@@ -943,7 +975,9 @@ export default function Index() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.addMilestoneBtn}
-            onPress={() => requirePro(() => setMilestoneModalVisible(true))}
+            onPress={() => requirePro(() => {
+            setMilestoneModalVisible(true);
+          })}
           >
             <View style={styles.milestoneDiamond} />
             <Text style={styles.addMilestoneText}>{isPro ? '+ Milestone' : '🔒 Milestone'}</Text>
@@ -1080,7 +1114,7 @@ export default function Index() {
               <TouchableOpacity
                 key={milestone.id}
                 style={[styles.milestoneItem, { backgroundColor: theme.card }]}
-                onLongPress={() => deleteMilestone(milestone.id)}
+                onLongPress={() => handleMilestoneLongPress(milestone)}
               >
                 <View style={[styles.milestoneColorBar, { backgroundColor: milestone.color }]} />
                 <View style={[styles.milestoneDiamondItem, { backgroundColor: milestone.color }]} />
@@ -1124,6 +1158,30 @@ export default function Index() {
           onConfirm={handleConfirm}
           onCancel={() => setPickerVisible(false)}
         />
+        <DateTimePickerModal
+          isVisible={milestoneDatePickerVisible}
+          mode="date"
+          date={editingMilestoneId !== null
+            ? new Date(milestonesRef.current.find(m => m.id === editingMilestoneId)?.date || new Date())
+            : new Date()
+          }
+          onConfirm={(d) => {
+            if (editingMilestoneId !== null) {
+              saveUndoSnapshot();
+              const updated = milestonesRef.current.map(m =>
+                m.id === editingMilestoneId ? { ...m, date: d.toISOString() } : m
+              );
+              setMilestonesSync(updated);
+              AsyncStorage.setItem("milestones", JSON.stringify(updated));
+            }
+            setMilestoneDatePickerVisible(false);
+            setEditingMilestoneId(null);
+          }}
+          onCancel={() => {
+            setMilestoneDatePickerVisible(false);
+            setEditingMilestoneId(null);
+          }}
+        />
 
       </ScrollView>
 
@@ -1160,8 +1218,15 @@ export default function Index() {
       />
       <MilestoneModal
         visible={milestoneModalVisible}
+        defaultDate={endDateRef.current}
         onConfirm={confirmAddMilestone}
         onCancel={() => setMilestoneModalVisible(false)}
+      />
+      <TaskNameModal
+        visible={renamingMilestone !== null}
+        taskNumber={0}
+        onConfirm={confirmRenameMilestone}
+        onCancel={() => setRenamingMilestone(null)}
       />
     </SafeAreaView>
   );
