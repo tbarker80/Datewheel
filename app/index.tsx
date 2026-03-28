@@ -163,6 +163,8 @@ export default function Index() {
   const [currentTaskName, setCurrentTaskName] = useState("Current Task");
   const [isDragging, setIsDragging] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [durationEditVisible, setDurationEditVisible] = useState(false);
+  const [durationEditValue, setDurationEditValue] = useState('');
   const [renamingMilestone, setRenamingMilestone] = useState<Milestone | null>(null);
   const [tappedTaskId, setTappedTaskId] = useState<number | null>(null);
   const [dragDisplayDates, setDragDisplayDates] = useState<{
@@ -471,6 +473,31 @@ export default function Index() {
     newEnd.setDate(newEnd.getDate() + shiftDays);
     setStartDateSync(newStart);
     setEndDateSync(newEnd);
+  }
+
+  function handleDurationConfirm() {
+    const num = parseInt(durationEditValue);
+    if (isNaN(num) || num <= 0) {
+      setDurationEditVisible(false);
+      return;
+    }
+    saveUndoSnapshot();
+    const newEnd = new Date(startDateRef.current);
+    switch (unit) {
+      case 'Days':
+      case 'Business Days':
+        newEnd.setDate(newEnd.getDate() + num);
+        break;
+      case 'Weeks':
+        newEnd.setDate(newEnd.getDate() + num * 7);
+        break;
+      case 'Months':
+        newEnd.setMonth(newEnd.getMonth() + num);
+        break;
+    }
+    setEndDateSync(newEnd);
+    setDurationEditVisible(false);
+    setDurationEditValue('');
   }
 
   function requirePro(action: () => void) {
@@ -972,6 +999,10 @@ export default function Index() {
           onTaskTap={handleTaskTap}
           isLocked={isLocked}
           onTimelineShift={handleTimelineShift}
+          onDurationTap={() => {
+            setDurationEditValue(duration);
+            setDurationEditVisible(true);
+          }}
           onEndDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             setEndDateSync(date);
@@ -1043,6 +1074,37 @@ export default function Index() {
                 </TouchableOpacity>
               ))}
             </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* Duration Edit Modal */}
+        <Modal visible={durationEditVisible} transparent={true} animationType="fade" onRequestClose={() => setDurationEditVisible(false)}>
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setDurationEditVisible(false)}>
+            <TouchableOpacity style={styles.modalBox} activeOpacity={1} onPress={() => {}}>
+              <Text style={styles.modalTitle}>SET DURATION</Text>
+              <View style={styles.templateInputWrapper}>
+                <TextInput
+                  style={styles.templateInput}
+                  value={durationEditValue}
+                  onChangeText={setDurationEditValue}
+                  keyboardType="numeric"
+                  autoFocus={true}
+                  selectTextOnFocus={true}
+                  maxLength={4}
+                  placeholder="Enter duration..."
+                  placeholderTextColor="#2A3F52"
+                />
+              </View>
+              <Text style={{ textAlign: 'center', color: '#5A7A96', fontSize: 12, marginBottom: 12 }}>
+                {unit} from {formatDate(startDate)}
+              </Text>
+              <TouchableOpacity style={styles.confirmBtn} onPress={handleDurationConfirm}>
+                <Text style={styles.confirmBtnText}>Apply</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => setDurationEditVisible(false)}>
+                <Text style={styles.cancelTemplateBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
           </TouchableOpacity>
         </Modal>
 
@@ -1368,4 +1430,6 @@ const styles = StyleSheet.create({
   lockToggleActive: { borderColor: '#F0A500', backgroundColor: '#1A1500' },
   lockToggleIcon: { fontSize: 14 },
   lockToggleText: { fontSize: 11, color: '#5A7A96', fontWeight: '500' },
+  confirmBtn: { marginHorizontal: 12, marginBottom: 8, backgroundColor: '#2E7DBC', borderRadius: 12, padding: 14, alignItems: 'center' },
+  confirmBtnText: { fontSize: 15, fontWeight: '600', color: '#FFFFFF' },
 });

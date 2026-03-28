@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
@@ -141,6 +141,7 @@ interface Props {
   highlightedTaskId: number | null;
   highlightedTaskDuration: string;
   isLocked: boolean;
+  onDurationTap: () => void;
   onTimelineShift: (shiftDays: number) => void;
   onUnitToggle: () => void;
   onEndDateChange: (date: Date) => void;
@@ -165,6 +166,7 @@ export default function DateWheel({
   holidayCountry,
   highlightedTaskId,
   highlightedTaskDuration,
+  onDurationTap,
   onUnitToggle,
   onEndDateChange,
   onStartDateChange,
@@ -208,6 +210,7 @@ export default function DateWheel({
   const dragTargetRef = React.useRef<'start' | 'end' | number>('end');
   const isDraggingRef = React.useRef(false);
   const [activeDot, setActiveDot] = React.useState<'start' | 'end' | number | null>(null);
+  
 
   function dist(ax: number, ay: number, bx: number, by: number) {
     return Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
@@ -600,9 +603,11 @@ export default function DateWheel({
           {tasks.length > 0 && (
             <Text style={styles.centerTaskCount}>{tasks.length + 1} Tasks</Text>
           )}
-          <Text style={styles.centerDuration}>
-            {highlightedTaskId !== null ? highlightedTaskDuration : duration}
-          </Text>
+          <TouchableOpacity onPress={onDurationTap} hitSlop={{ top: 10, bottom: 10, left: 20, right: 20 }}>
+            <Text style={styles.centerDuration}>
+              {highlightedTaskId !== null ? highlightedTaskDuration : duration}
+            </Text>
+          </TouchableOpacity>
           <Text style={styles.centerUnit} onPress={onUnitToggle}>
             {unit.toUpperCase()} ▾
           </Text>
