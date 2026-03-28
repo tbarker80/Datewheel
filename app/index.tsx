@@ -162,6 +162,7 @@ export default function Index() {
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [currentTaskName, setCurrentTaskName] = useState("Current Task");
   const [isDragging, setIsDragging] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const [renamingMilestone, setRenamingMilestone] = useState<Milestone | null>(null);
   const [tappedTaskId, setTappedTaskId] = useState<number | null>(null);
   const [dragDisplayDates, setDragDisplayDates] = useState<{
@@ -451,6 +452,25 @@ export default function Index() {
     newActiveEnd.setDate(newActiveEnd.getDate() + shiftDays);
     setStartDateSync(newActiveStart);
     setEndDateSync(newActiveEnd);
+  }
+
+  async function handleTimelineShift(shiftDays: number) {
+    if (shiftDays === 0) return;
+    const shiftedTasks = tasksRef.current.map((task) => {
+      const newStart = new Date(task.startDate);
+      const newEnd = new Date(task.endDate);
+      newStart.setDate(newStart.getDate() + shiftDays);
+      newEnd.setDate(newEnd.getDate() + shiftDays);
+      return { ...task, startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
+    });
+    setTasksSync(shiftedTasks);
+    await AsyncStorage.setItem("tasks", JSON.stringify(shiftedTasks));
+    const newStart = new Date(startDateRef.current);
+    const newEnd = new Date(endDateRef.current);
+    newStart.setDate(newStart.getDate() + shiftDays);
+    newEnd.setDate(newEnd.getDate() + shiftDays);
+    setStartDateSync(newStart);
+    setEndDateSync(newEnd);
   }
 
   function requirePro(action: () => void) {
@@ -915,6 +935,22 @@ export default function Index() {
           </TouchableOpacity>
         </View>
 
+        {/* Lock toggle */}
+        <View style={styles.lockRow}>
+          <TouchableOpacity
+            style={[styles.lockToggle, isLocked && styles.lockToggleActive]}
+            onPress={() => {
+              setIsLocked(!isLocked);
+              if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+          >
+            <Text style={styles.lockToggleIcon}>{isLocked ? '🔒' : '🔓'}</Text>
+            <Text style={[styles.lockToggleText, isLocked && { color: '#F0A500' }]}>
+              {isLocked ? 'Timeline Locked — drag wheel to shift' : 'Lock Timeline'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* The Wheel */}
         <DateWheel
           startDate={startDate}
@@ -934,6 +970,8 @@ export default function Index() {
           onDragEnd={handleDragEnd}
           onDragActive={handleDragActive}
           onTaskTap={handleTaskTap}
+          isLocked={isLocked}
+          onTimelineShift={handleTimelineShift}
           onEndDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             setEndDateSync(date);
@@ -1325,4 +1363,9 @@ const styles = StyleSheet.create({
   saveOptionSub: { fontSize: 11, color: "#5A7A96" },
   cancelTemplateBtn: { marginHorizontal: 12, marginBottom: 16, padding: 14, alignItems: "center" },
   cancelTemplateBtnText: { fontSize: 14, color: "#5A7A96" },
+  lockRow: { width: '100%', alignItems: 'flex-start', marginBottom: 8, marginTop: -4 },
+  lockToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#2A3F52' },
+  lockToggleActive: { borderColor: '#F0A500', backgroundColor: '#1A1500' },
+  lockToggleIcon: { fontSize: 14 },
+  lockToggleText: { fontSize: 11, color: '#5A7A96', fontWeight: '500' },
 });

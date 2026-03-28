@@ -140,6 +140,8 @@ interface Props {
   holidayCountry: string;
   highlightedTaskId: number | null;
   highlightedTaskDuration: string;
+  isLocked: boolean;
+  onTimelineShift: (shiftDays: number) => void;
   onUnitToggle: () => void;
   onEndDateChange: (date: Date) => void;
   onStartDateChange: (date: Date) => void;
@@ -149,6 +151,7 @@ interface Props {
   onDragEnd: () => void;
   onDragActive: (dragging: boolean) => void;
   onTaskTap: (taskId: number | null) => void;
+  
 }
 
 export default function DateWheel({
@@ -171,6 +174,8 @@ export default function DateWheel({
   onDragEnd,
   onDragActive,
   onTaskTap,
+  isLocked,
+  onTimelineShift,
 }: Props) {
   const monthStarts = getMonthStartDays();
   const holidayDays = getHolidayDays(holidayCountry, startDate.getFullYear());
@@ -235,14 +240,21 @@ export default function DateWheel({
     }
   }
 
+  const lockDragStartDayRef = React.useRef<number>(0);
+
   function handleDragStart(touchX: number, touchY: number) {
     const dx = touchX - R;
     const dy = touchY - R;
     const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance < R * 0.4 || distance > R) return;
 
-    // Only activate in the ring area
-    if (distance < R * 0.4 || distance > R) {
-      isDraggingRef.current = false;
+    // LOCK MODE — capture starting angle for whole-timeline drag
+    if (isLocked) {
+      let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+      if (angle < 0) angle += 360;
+      lockDragStartDayRef.current = Math.round((angle / 360) * TOTAL_DAYS);
+      isDraggingRef.current = true;
+      onDragActive(true);
       return;
     }
 
@@ -251,7 +263,6 @@ export default function DateWheel({
 
     let closestBoundaryDist = Infinity;
     let closestBoundaryIndex = -1;
-
     boundaryDots.forEach((dot) => {
       const d = dist(touchX, touchY, dot.x, dot.y);
       if (d < closestBoundaryDist) {
@@ -261,9 +272,6 @@ export default function DateWheel({
     });
 
     const minDist = Math.min(distToStart, distToEnd, closestBoundaryDist);
-
-    // SCROLL FIX — only activate gesture if within 44px of a dot handle
-    // Anywhere else on the wheel allows normal scrolling
     const ACTIVATION_RADIUS = 44;
     if (minDist > ACTIVATION_RADIUS) {
       isDraggingRef.current = false;
@@ -297,6 +305,16 @@ export default function DateWheel({
     let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
     if (angle < 0) angle += 360;
     const dayOfYear = Math.round((angle / 360) * TOTAL_DAYS);
+
+    // LOCK MODE — shift entire timeline
+    if (isLocked) {
+      const shiftDays = dayOfYear - lockDragStartDayRef.current;
+      if (shiftDays !== 0) {
+        lockDragStartDayRef.current = dayOfYear;
+        onTimelineShift(shiftDays);
+      }
+      return;
+    }
 
     const target = dragTargetRef.current;
 
