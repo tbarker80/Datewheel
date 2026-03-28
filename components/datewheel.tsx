@@ -208,16 +208,17 @@ export default function DateWheel({
     return Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
   }
 
-  function snapToUnit(dayOfYear: number, currentUnit: string, isStart: boolean): number {
+  function snapToUnit(dayOfYear: number, currentUnit: string, isStart: boolean, taskStartDay?: number): number {
     switch (currentUnit) {
       case 'Weeks': {
+        const baseDay = taskStartDay !== undefined ? taskStartDay : startDay;
         if (isStart) {
           const weeks = Math.round(dayOfYear / 7);
           return Math.max(weeks, 1) * 7;
         } else {
-          const diff = dayOfYear - startDay;
+          const diff = dayOfYear - baseDay;
           const weeks = Math.round(diff / 7);
-          return startDay + Math.max(weeks, 1) * 7;
+          return baseDay + Math.max(weeks, 1) * 7;
         }
       }
       case 'Months': {
@@ -300,7 +301,9 @@ export default function DateWheel({
     const target = dragTargetRef.current;
 
     if (typeof target === 'number') {
-      const snappedDay = snapToUnit(dayOfYear, unit, false);
+      const taskStartDate = tasks[target] ? new Date(tasks[target].startDate) : startDate;
+      const taskStartDay = getDayOfYear(taskStartDate);
+      const snappedDay = snapToUnit(dayOfYear, unit, false, taskStartDay);
       const newDate = new Date(startDate.getFullYear(), 0, snappedDay);
       if (tasks[target] && newDate > new Date(tasks[target].startDate)) {
         onBoundaryChange(target, newDate);
