@@ -2,6 +2,13 @@ import DateWheel, { Milestone, Task, TASK_COLORS } from "@/components/datewheel"
 import GanttChart from "@/components/GanttChart";
 import { businessDaysWithHolidays } from "@/components/holidays";
 import MilestoneModal from "@/components/MilestoneModal";
+import {
+  cancelAllReminders,
+  cancelReminder,
+  requestNotificationPermissions,
+  scheduleReminder,
+} from '@/components/notifications';
+import OnboardingModal from '@/components/OnboardingModal';
 import { useProStatus } from "@/components/ProContext";
 import ProModal from "@/components/ProModal";
 import SettingsModal, { AppSettings } from "@/components/SettingsModal";
@@ -27,6 +34,7 @@ import {
   View,
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { registerDatewheelHandler } from './_layout';
 
 function daysBetween(start: Date, end: Date) {
@@ -135,6 +143,7 @@ async function saveProject(
 
 export default function Index() {
   const { isPro } = useProStatus();
+  const insets = useSafeAreaInsets();
 
   const today = new Date();
   const future = new Date();
@@ -152,6 +161,7 @@ export default function Index() {
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [openVisible, setOpenVisible] = useState(false);
   const [saveVisible, setSaveVisible] = useState(false);
+  const [onboardingVisible, setOnboardingVisible] = useState(false);
   const [ganttVisible, setGanttVisible] = useState(false);
   const [proModalVisible, setProModalVisible] = useState(false);
   const [milestoneModalVisible, setMilestoneModalVisible] = useState(false);
@@ -207,6 +217,8 @@ export default function Index() {
     loadSettings();
     loadTasks();
     loadMilestones();
+    checkOnboarding(); 
+    requestNotificationPermissions();
   }, []);
 
   useEffect(() => {
@@ -274,6 +286,23 @@ export default function Index() {
       if (stored) setSettings(JSON.parse(stored));
     } catch (e) {}
   }
+
+  async function checkOnboarding() {
+    try {
+      const seen = await AsyncStorage.getItem('onboarding_seen');
+      if (!seen) {
+        setOnboardingVisible(true);
+      }
+    } catch (e) {}
+  }
+
+  async function handleOnboardingDone() {
+    setOnboardingVisible(false);
+    try {
+      await AsyncStorage.setItem('onboarding_seen', 'true');
+    } catch (e) {}
+  }
+
 
   async function saveSettings(newSettings: AppSettings) {
     setSettings(newSettings);
@@ -429,6 +458,15 @@ export default function Index() {
     snapActiveEnd.setDate(snapActiveEnd.getDate() + shiftDays);
     setStartDateSync(snapActiveStart);
     setEndDateSync(snapActiveEnd);
+    for (let i = taskIndex; i < updated.length; i++) {
+      const task = updated[i];
+      if (task.notificationId && task.reminderDays) {
+        await cancelReminder(task.notificationId);
+        const newId = await scheduleReminder(task.name, new Date(task.endDate), task.reminderDays);
+        if (newId) updated[i] = { ...task, notificationId: newId };
+      }
+    }
+    await AsyncStorage.setItem("tasks", JSON.stringify(updated));
   }
 
   async function shiftTasksToNewStart(newStart: Date) {
@@ -473,6 +511,15 @@ export default function Index() {
     newEnd.setDate(newEnd.getDate() + shiftDays);
     setStartDateSync(newStart);
     setEndDateSync(newEnd);
+    for (const task of shiftedTasks) {
+      if (task.notificationId && task.reminderDays) {
+        await cancelReminder(task.notificationId);
+        const newId = await scheduleReminder(task.name, new Date(task.endDate), task.reminderDays);
+        if (newId) task.notificationId = newId;
+      }
+    }
+    // Re-save with updated notification IDs
+    await AsyncStorage.setItem("tasks", JSON.stringify(shiftedTasks));
   }
 
   function handleDurationConfirm() {
@@ -536,9 +583,14 @@ export default function Index() {
     setRenameModalVisible(false);
   }
 
-  async function confirmAddTask(name: string) {
+  async function confirmAddTask(name: string, reminderDays: number | null) {
     saveUndoSnapshot();
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    let notificationId: string | undefined;
+    if (reminderDays !== null) {
+      const id = await scheduleReminder(currentTaskNameRef.current, endDateRef.current, reminderDays);
+      notificationId = id ?? undefined;
+    }
     const newTask: Task = {
       id: Date.now(),
       name: currentTaskNameRef.current,
@@ -547,7 +599,10 @@ export default function Index() {
       color: TASK_COLORS[tasksRef.current.length % TASK_COLORS.length],
       duration,
       unit,
+      notificationId,
+      reminderDays: reminderDays ?? undefined,
     };
+
     const updated = [...tasksRef.current, newTask];
     await saveTasks(updated);
     await requestReviewIfAppropriate(updated.length);
@@ -560,14 +615,22 @@ export default function Index() {
     setTaskNameVisible(false);
   }
 
-  async function confirmAddMilestone(name: string, date: Date) {
+  async function confirmAddMilestone(name: string, date: Date, reminderDays: number | null) {
     saveUndoSnapshot();
+    let notificationId: string | undefined;
+    if (reminderDays !== null) {
+      const id = await scheduleReminder(name, date, reminderDays);
+      notificationId = id ?? undefined;
+    }
     const newMilestone: Milestone = {
       id: Date.now(),
       name,
       date: date.toISOString(),
       color: MILESTONE_COLORS[milestonesRef.current.length % MILESTONE_COLORS.length],
+      notificationId,
+      reminderDays: reminderDays ?? undefined,
     };
+
     const updated = [...milestonesRef.current, newMilestone];
     setMilestonesSync(updated);
     await AsyncStorage.setItem("milestones", JSON.stringify(updated));
@@ -582,6 +645,10 @@ export default function Index() {
         text: "Delete", style: "destructive",
         onPress: async () => {
           saveUndoSnapshot();
+          const taskToDelete = tasksRef.current.find(t => t.id === id);
+          if (taskToDelete?.notificationId) {
+            await cancelReminder(taskToDelete.notificationId);
+          }
           const updated = tasksRef.current.filter((t) => t.id !== id);
           await saveTasks(updated);
         },
@@ -590,6 +657,10 @@ export default function Index() {
   }
 
   async function deleteMilestone(id: number) {
+    const milestoneToDelete = milestonesRef.current.find(m => m.id === id);
+    if (milestoneToDelete?.notificationId) {
+      await cancelReminder(milestoneToDelete.notificationId);
+    }
     const updated = milestonesRef.current.filter(m => m.id !== id);
     saveUndoSnapshot();
     setMilestonesSync(updated);
@@ -625,6 +696,7 @@ export default function Index() {
   async function confirmRenameMilestone(newName: string) {
     if (!renamingMilestone) return;
     saveUndoSnapshot();
+    await cancelAllReminders();
     const updated = milestonesRef.current.map(m =>
       m.id === renamingMilestone.id ? { ...m, name: newName.trim() || m.name } : m
     );
@@ -886,7 +958,12 @@ export default function Index() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <StatusBar barStyle={settings.darkMode ? "light-content" : "dark-content"} backgroundColor={theme.bg} />
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView
+  style={styles.scroll}
+  contentContainerStyle={[styles.container, { paddingBottom: insets.bottom + 80 }]}
+  showsVerticalScrollIndicator={false}
+>
+
 
         {/* Header */}
         <View style={styles.headerRow}>
@@ -907,40 +984,43 @@ export default function Index() {
           </View>
         </View>
 
-        {/* Open / Save Banner */}
-        <View style={styles.templateBanner}>
+        {/* Compact toolbar: Open · Save · Undo · Reset */}
+        <View style={styles.toolbar}>
           <TouchableOpacity
-            style={[styles.templateBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
             onPress={() => requirePro(() => setOpenVisible(true))}
           >
-            <Text style={styles.templateBtnIcon}>📂</Text>
-            <Text style={[styles.templateBtnText, { color: theme.muted }]}>Open</Text>
-            {!isPro && <Text style={styles.lockIcon}>🔒</Text>}
+            <Text style={styles.toolbarIcon}>📂</Text>
+            <Text style={[styles.toolbarLabel, { color: theme.muted }]}>Open{!isPro ? ' 🔒' : ''}</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
-            style={[styles.saveTemplateBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
             onPress={() => setSaveVisible(true)}
           >
-            <Text style={[styles.templateBtnText, { color: theme.accent }]}>Save</Text>
+            <Text style={styles.toolbarIcon}>💾</Text>
+            <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save</Text>
           </TouchableOpacity>
-        </View>
 
-        {/* Quick Actions */}
-        <View style={styles.quickRow}>
           <TouchableOpacity
-            style={[styles.quickBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 0.4 }]}
+            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 0.35 }]}
             onPress={handleUndo}
             disabled={!canUndo}
           >
-            <Text style={[styles.quickBtnText, { color: canUndo ? theme.accent : theme.muted }]}>↩ Undo</Text>
+            <Text style={styles.toolbarIcon}>↩</Text>
+            <Text style={[styles.toolbarLabel, { color: canUndo ? theme.accent : theme.muted }]}>Undo</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
-            style={[styles.quickBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
             onPress={handleReset}
           >
-            <Text style={[styles.quickBtnText, { color: theme.muted }]}>↺ Reset</Text>
+            <Text style={styles.toolbarIcon}>↺</Text>
+            <Text style={[styles.toolbarLabel, { color: theme.muted }]}>Reset</Text>
           </TouchableOpacity>
         </View>
+
+
 
         {/* Timeline dates */}
         <View style={styles.dateRow}>
@@ -1186,7 +1266,12 @@ export default function Index() {
                 </Text>
                 <Text style={[styles.taskItemDuration, { color: task.color }]}>{task.duration} {task.unit}</Text>
               </View>
-              <Text style={[styles.taskNum, { color: theme.muted }]}>#{i + 1}</Text>
+              <View style={styles.taskRight}>
+                {task.reminderDays && (
+                  <Text style={styles.reminderBell}>🔔</Text>
+                )}
+                <Text style={[styles.taskNum, { color: theme.muted }]}>#{i + 1}</Text>
+              </View>
             </TouchableOpacity>
           ))}
 
@@ -1224,7 +1309,12 @@ export default function Index() {
                     {formatDate(new Date(milestone.date))} · {getDayName(new Date(milestone.date))}
                   </Text>
                 </View>
-                <Text style={[styles.milestoneTag, { color: milestone.color }]}>◆</Text>
+                <View style={styles.milestoneRight}>
+                  {milestone.reminderDays && (
+                    <Text style={styles.reminderBell}>🔔</Text>
+                  )}
+                  <Text style={[styles.milestoneTag, { color: milestone.color }]}>◆</Text>
+                </View>
               </TouchableOpacity>
             ))}
 
@@ -1285,7 +1375,13 @@ export default function Index() {
 
       </ScrollView>
 
-      <SettingsModal visible={settingsVisible} settings={settings} onClose={() => setSettingsVisible(false)} onChange={saveSettings} />
+      <SettingsModal
+        visible={settingsVisible}
+        settings={settings}
+        onClose={() => setSettingsVisible(false)}
+        onChange={saveSettings}
+        onShowOnboarding={() => { setSettingsVisible(false); setOnboardingVisible(true); }}
+      />
       <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 1} onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
       <TaskNameModal
         visible={renameModalVisible}
@@ -1328,6 +1424,11 @@ export default function Index() {
         onConfirm={confirmRenameMilestone}
         onCancel={() => setRenamingMilestone(null)}
       />
+      <OnboardingModal
+        visible={onboardingVisible}
+        onDone={handleOnboardingDone}
+      />
+
     </SafeAreaView>
   );
 }
@@ -1345,6 +1446,44 @@ const lightTheme = {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   scroll: { flex: 1 },
+  toolbar: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 8,
+    marginBottom: 12,
+  },
+  toolbarBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 0.5,
+    gap: 3,
+  },
+   taskRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  milestoneRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  reminderBell: {
+    fontSize: 11,
+  },
+
+  toolbarIcon: {
+    fontSize: 16,
+  },
+  toolbarLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+
   container: { alignItems: "center", padding: 16, paddingBottom: 60 },
   headerRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -1356,20 +1495,11 @@ const styles = StyleSheet.create({
   proBadgeText: { fontSize: 9, fontWeight: "700", color: "#2E9BFF", letterSpacing: 1.5 },
   gearBtn: { padding: 8 },
   gearIcon: { fontSize: 24, color: "#5A7A96" },
-  lockIcon: { fontSize: 12, marginLeft: 4 },
-  templateBanner: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
-  templateBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 8, borderRadius: 10, borderWidth: 0.5 },
-  saveTemplateBtn: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8, borderRadius: 10, borderWidth: 0.5, flexDirection: "row", gap: 4 },
-  templateBtnIcon: { fontSize: 14 },
-  templateBtnText: { fontSize: 13, fontWeight: "500" },
-  quickRow: { flexDirection: "row", gap: 10, width: "100%", marginBottom: 12 },
-  quickBtn: { flex: 1, paddingVertical: 9, borderRadius: 12, borderWidth: 1, alignItems: "center" },
-  quickBtnText: { fontSize: 13, fontWeight: "500" },
-  dateRow: { flexDirection: "row", width: "100%", gap: 10, marginBottom: 12 },
-  dateField: { flex: 1, borderRadius: 14, padding: 12, alignItems: "center" },
-  fieldLabel: { fontSize: 10, fontWeight: "600", letterSpacing: 1.5, marginBottom: 4 },
-  fieldValue: { fontSize: 15, fontWeight: "600" },
-  fieldDay: { fontSize: 11, marginTop: 2 },
+  dateRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
+  dateField: { flex: 1, borderRadius: 10, padding: 8, alignItems: "center" },
+  fieldLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1.2, marginBottom: 2 },
+  fieldValue: { fontSize: 12, fontWeight: "600" },
+  fieldDay: { fontSize: 10, marginTop: 1 },
   taskDateRow: { flexDirection: "row", width: "100%", borderRadius: 12, marginBottom: 8, overflow: "hidden" },
   taskDateField: { flex: 1, padding: 10, alignItems: "center" },
   taskDateLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1, marginBottom: 2 },
