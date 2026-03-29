@@ -47,6 +47,8 @@ export interface Task {
   color: string;
   duration: string;
   unit: string;
+  notificationId?: string;
+  reminderDays?: number;
 }
 
 export interface Milestone {
@@ -54,6 +56,8 @@ export interface Milestone {
   name: string;
   date: string;
   color: string;
+  notificationId?: string;
+  reminderDays?: number;
 }
 
 function dayToAngle(dayOfYear: number) {
@@ -152,7 +156,6 @@ interface Props {
   onDragEnd: () => void;
   onDragActive: (dragging: boolean) => void;
   onTaskTap: (taskId: number | null) => void;
-  
 }
 
 export default function DateWheel({
@@ -166,7 +169,9 @@ export default function DateWheel({
   holidayCountry,
   highlightedTaskId,
   highlightedTaskDuration,
+  isLocked,
   onDurationTap,
+  onTimelineShift,
   onUnitToggle,
   onEndDateChange,
   onStartDateChange,
@@ -176,8 +181,6 @@ export default function DateWheel({
   onDragEnd,
   onDragActive,
   onTaskTap,
-  isLocked,
-  onTimelineShift,
 }: Props) {
   const monthStarts = getMonthStartDays();
   const holidayDays = getHolidayDays(holidayCountry, startDate.getFullYear());
@@ -209,8 +212,8 @@ export default function DateWheel({
 
   const dragTargetRef = React.useRef<'start' | 'end' | number>('end');
   const isDraggingRef = React.useRef(false);
+  const lockDragStartDayRef = React.useRef<number>(0);
   const [activeDot, setActiveDot] = React.useState<'start' | 'end' | number | null>(null);
-  
 
   function dist(ax: number, ay: number, bx: number, by: number) {
     return Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
@@ -242,8 +245,6 @@ export default function DateWheel({
         return dayOfYear;
     }
   }
-
-  const lockDragStartDayRef = React.useRef<number>(0);
 
   function handleDragStart(touchX: number, touchY: number) {
     const dx = touchX - R;
@@ -356,10 +357,20 @@ export default function DateWheel({
     const dx = touchX - R;
     const dy = touchY - R;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    if (distance < RING_RADIUS - 20 || distance > RING_RADIUS + 20) {
+
+    // Tapping outside the ring entirely — clear selection
+    if (distance > RING_RADIUS + 20) {
       onTaskTap(null);
       return;
     }
+
+    // Tapping inside the hub — do NOT clear the highlighted task,
+    // let the center TouchableOpacity handle it
+    if (distance < RING_RADIUS - 20) {
+      return;
+    }
+
+    // Tapping on the ring — find which task was tapped
     let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
     if (angle < 0) angle += 360;
     const tappedDay = Math.round((angle / 360) * TOTAL_DAYS);
@@ -544,6 +555,17 @@ export default function DateWheel({
                   strokeWidth={isActive ? 2.5 : 1.5}
                   strokeOpacity={isActive ? 0.9 : 0.4}
                 />
+                {task.reminderDays && !isActive && (
+                  <Circle
+                    cx={tEndXY.x} cy={tEndXY.y}
+                    r={13}
+                    fill="none"
+                    stroke="#FFFFFF"
+                    strokeWidth={1}
+                    strokeOpacity={0.5}
+                    strokeDasharray="2 2"
+                  />
+                )}
               </React.Fragment>
             );
           })}
@@ -553,7 +575,6 @@ export default function DateWheel({
             const mDate = new Date(milestone.date);
             const mDay = getDayOfYear(mDate);
             const mAngle = dayToAngle(mDay);
-            // Place on inside edge of ring
             const mXY = angleToXY(mAngle, RING_RADIUS - 22);
             const size = 6;
             return (

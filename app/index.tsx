@@ -1,12 +1,10 @@
 import DateWheel, { Milestone, Task, TASK_COLORS } from "@/components/datewheel";
 import GanttChart from "@/components/GanttChart";
 import { businessDaysWithHolidays } from "@/components/holidays";
-import MilestoneModal from "@/components/MilestoneModal";
 import {
-  cancelAllReminders,
   cancelReminder,
   requestNotificationPermissions,
-  scheduleReminder,
+  scheduleReminder
 } from '@/components/notifications';
 import OnboardingModal from '@/components/OnboardingModal';
 import { useProStatus } from "@/components/ProContext";
@@ -536,13 +534,17 @@ export default function Index() {
   }
 
   function handleDurationConfirm() {
-    const num = parseInt(durationEditValue);
-    if (isNaN(num) || num <= 0) {
-      setDurationEditVisible(false);
-      return;
-    }
-    saveUndoSnapshot();
-    const newEnd = new Date(startDateRef.current);
+  const num = parseInt(durationEditValue);
+  if (isNaN(num) || num <= 0) {
+    setDurationEditVisible(false);
+    return;
+  }
+  saveUndoSnapshot();
+
+  const savedTaskId = savedTappedTaskIdRef.current; // use ref, not tappedTaskId state
+
+  const calcNewEnd = (start: Date): Date => {
+    const newEnd = new Date(start);
     switch (unit) {
       case 'Days':
       case 'Business Days':
@@ -555,10 +557,37 @@ export default function Index() {
         newEnd.setMonth(newEnd.getMonth() + num);
         break;
     }
+    return newEnd;
+  };
+
+  if (savedTaskId !== null) {
+    const index = tasksRef.current.findIndex(t => t.id === savedTaskId);
+    if (index !== -1) {
+      const task = tasksRef.current[index];
+      const newEnd = calcNewEnd(new Date(task.startDate));
+      const shiftMs = newEnd.getTime() - new Date(task.endDate).getTime();
+
+      const updated = tasksRef.current.map((t, i) => {
+        if (i < index) return t;
+        if (i === index) return { ...t, endDate: newEnd.toISOString() };
+        const newStart = new Date(new Date(t.startDate).getTime() + shiftMs);
+        const newTaskEnd = new Date(new Date(t.endDate).getTime() + shiftMs);
+        return { ...t, startDate: newStart.toISOString(), endDate: newTaskEnd.toISOString() };
+      });
+
+      saveTasks(updated);
+      setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
+      setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
+    }
+  } else {
+    const newEnd = calcNewEnd(startDateRef.current);
     setEndDateSync(newEnd);
-    setDurationEditVisible(false);
-    setDurationEditValue('');
   }
+
+  savedTappedTaskIdRef.current = null;
+  setDurationEditVisible(false);
+  setDurationEditValue('');
+}
 
   function requirePro(action: () => void) {
     if (isPro) { action(); } else { setProModalVisible(true); }
@@ -727,20 +756,6 @@ export default function Index() {
     await saveTasks(newStoredTasks);
   }
 
-  async function confirmRename(name: string) {
-    if (editingTaskId === null) {
-      setCurrentTaskName(name);
-      currentTaskNameRef.current = name;
-    } else {
-      const updated = tasksRef.current.map((t) =>
-        t.id === editingTaskId ? { ...t, name } : t
-      );
-      await saveTasks(updated);
-    }
-    setEditingTaskId(null);
-    setRenameModalVisible(false);
-  }
-
   async function confirmAddTask(name: string, reminderDays: number | null) {
     saveUndoSnapshot();
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -773,28 +788,16 @@ export default function Index() {
     setTaskNameVisible(false);
   }
 
-  async function confirmAddMilestone(name: string, date: Date, reminderDays: number | null) {
-    saveUndoSnapshot();
-    let notificationId: string | undefined;
-    if (reminderDays !== null) {
-      const id = await scheduleReminder(name, date, reminderDays);
-      notificationId = id ?? undefined;
-    }
-    const newMilestone: Milestone = {
-      id: Date.now(),
-      name,
-      date: date.toISOString(),
-      color: MILESTONE_COLORS[milestonesRef.current.length % MILESTONE_COLORS.length],
-      notificationId,
-      reminderDays: reminderDays ?? undefined,
-    };
-
-    const updated = [...milestonesRef.current, newMilestone];
-    setMilestonesSync(updated);
-    await AsyncStorage.setItem("milestones", JSON.stringify(updated));
-    setMilestoneModalVisible(false);
-    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }
+  async function confirmRenameMilestone(newName: string, _reminderDays: number | null) {
+  if (!renamingMilestone) return;
+  saveUndoSnapshot();
+  const updated = milestonesRef.current.map(m =>
+    m.id === renamingMilestone.id ? { ...m, name: newName.trim() || m.name } : m
+  );
+  setMilestonesSync(updated);
+  await AsyncStorage.setItem("milestones", JSON.stringify(updated));
+  setRenamingMilestone(null);
+}
 
   async function deleteTask(id: number) {
   Alert.alert("Delete Task", "Remove this task?", [
@@ -876,17 +879,19 @@ export default function Index() {
     );
   }
 
-  async function confirmRenameMilestone(newName: string) {
-    if (!renamingMilestone) return;
-    saveUndoSnapshot();
-    await cancelAllReminders();
-    const updated = milestonesRef.current.map(m =>
-      m.id === renamingMilestone.id ? { ...m, name: newName.trim() || m.name } : m
+  async function confirmRename(name: string, _reminderDays: number | null) {
+  if (editingTaskId === null) {
+    setCurrentTaskName(name);
+    currentTaskNameRef.current = name;
+  } else {
+    const updated = tasksRef.current.map((t) =>
+      t.id === editingTaskId ? { ...t, name } : t
     );
-    setMilestonesSync(updated);
-    await AsyncStorage.setItem("milestones", JSON.stringify(updated));
-    setRenamingMilestone(null);
+    await saveTasks(updated);
   }
+  setEditingTaskId(null);
+  setRenameModalVisible(false);
+}
 
   function handleReset() {
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1263,9 +1268,16 @@ export default function Index() {
           isLocked={isLocked}
           onTimelineShift={handleTimelineShift}
           onDurationTap={() => {
-            setDurationEditValue(duration);
-            setDurationEditVisible(true);
-          }}
+  savedTappedTaskIdRef.current = tappedTaskId; // save before it gets cleared
+  const editingTask = tappedTaskId !== null
+    ? tasksRef.current.find(t => t.id === tappedTaskId)
+    : null;
+  const editValue = editingTask
+    ? calcDuration(new Date(editingTask.startDate), new Date(editingTask.endDate), unit, settings.holidayCountry)
+    : duration;
+  setDurationEditValue(editValue);
+  setDurationEditVisible(true);
+}}
           onEndDateChange={(date) => {
             if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             setEndDateSync(date);
@@ -1631,12 +1643,6 @@ export default function Index() {
         visible={proModalVisible}
         onClose={() => setProModalVisible(false)}
         onSuccess={() => setProModalVisible(false)}
-      />
-      <MilestoneModal
-        visible={milestoneModalVisible}
-        defaultDate={endDateRef.current}
-        onConfirm={confirmAddMilestone}
-        onCancel={() => setMilestoneModalVisible(false)}
       />
       <TaskNameModal
         visible={renamingMilestone !== null}
