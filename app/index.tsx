@@ -86,6 +86,18 @@ interface DatewheelFile {
   startDate: string;
   endDate: string;
 }
+interface CombinedTask {
+  id: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  color: string;
+  duration: string;
+  unit: string;
+  notificationId?: string;
+  reminderDays?: number;
+  isActive: boolean;
+}
 
 interface UndoSnapshot {
   tasks: Task[];
@@ -188,6 +200,7 @@ export default function Index() {
 
   const tasksRef = useRef<Task[]>([]);
   const startDateRef = useRef<Date>(today);
+  const scrollViewRef = useRef<ScrollView>(null);
   const endDateRef = useRef<Date>(future);
   const taskSnapshotRef = useRef<Task[]>([]);
   const activeStartSnapshotRef = useRef<string>("");
@@ -608,6 +621,112 @@ export default function Index() {
     );
   }
 
+  async function handleMoveTask(index: number, direction: 'up' | 'down') {
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+
+    // Build combined list: stored tasks + active task
+    const combined: CombinedTask[] = [
+      ...tasksRef.current.map(t => ({ ...t, isActive: false })),
+      {
+        id: -1,
+        name: currentTaskNameRef.current,
+        startDate: startDateRef.current.toISOString(),
+        endDate: endDateRef.current.toISOString(),
+        color: currentTaskColor,
+        duration,
+        unit,
+        isActive: true,
+      },
+    ];
+
+    if (swapIndex < 0 || swapIndex >= combined.length) return;
+
+    saveUndoSnapshot();
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    // Swap the two items
+    const newOrder = [...combined];
+    [newOrder[index], newOrder[swapIndex]] = [newOrder[swapIndex], newOrder[index]];
+
+    // Anchor = stored task with minimum ID (the originally first-created task).
+    // This never changes regardless of date reordering, so the anchor is stable.
+    // The active task (id = -1) is never the anchor.
+    const originalMap = new Map(tasksRef.current.map(t => [t.id, t]));
+    let anchorId = tasksRef.current.reduce(
+      (minId, t) => t.id < minId ? t.id : minId,
+      tasksRef.current[0]?.id ?? Infinity
+    );
+    const anchorIndex = newOrder.findIndex(t => t.id === anchorId);
+    const anchorOrig = originalMap.get(anchorId)!;
+
+    // Duration helper — uses original stored duration, or active task's current duration
+    const getDurationMs = (item: CombinedTask): number => {
+      if (item.isActive) {
+        return endDateRef.current.getTime() - startDateRef.current.getTime();
+      }
+      const orig = originalMap.get(item.id);
+      if (orig) return new Date(orig.endDate).getTime() - new Date(orig.startDate).getTime();
+      return new Date(item.endDate).getTime() - new Date(item.startDate).getTime();
+    };
+
+    const relinked = [...newOrder];
+
+    // Anchor stays exactly as originally stored
+    relinked[anchorIndex] = {
+      ...relinked[anchorIndex],
+      startDate: anchorOrig.startDate,
+      endDate: anchorOrig.endDate,
+    };
+
+    // Chain forward from anchor
+    let cursor = new Date(anchorOrig.endDate);
+    for (let i = anchorIndex + 1; i < relinked.length; i++) {
+      const durationMs = getDurationMs(relinked[i]);
+      const newStart = new Date(cursor);
+      const newEnd = new Date(cursor.getTime() + durationMs);
+      relinked[i] = { ...relinked[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
+      cursor = newEnd;
+    }
+
+    // Chain backward from anchor
+    cursor = new Date(anchorOrig.startDate);
+    for (let i = anchorIndex - 1; i >= 0; i--) {
+      const durationMs = getDurationMs(relinked[i]);
+      const newEnd = new Date(cursor);
+      const newStart = new Date(cursor.getTime() - durationMs);
+      relinked[i] = { ...relinked[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
+      cursor = newStart;
+    }
+
+    // Split relinked back into stored tasks and active task state
+    const newStoredTasks: Task[] = [];
+    let newActiveStart = startDateRef.current;
+    let newActiveEnd = endDateRef.current;
+
+    for (const item of relinked) {
+      if (item.isActive) {
+        newActiveStart = new Date(item.startDate);
+        newActiveEnd = new Date(item.endDate);
+      } else {
+        const { isActive, ...taskData } = item;
+        newStoredTasks.push(taskData as Task);
+      }
+    }
+
+    // Reschedule notifications for tasks whose dates changed
+    for (const task of newStoredTasks) {
+      if (task.notificationId && task.reminderDays) {
+        await cancelReminder(task.notificationId);
+        const newId = await scheduleReminder(task.name, new Date(task.endDate), task.reminderDays);
+        if (newId) task.notificationId = newId;
+      }
+    }
+
+    setStartDateSync(newActiveStart);
+    setEndDateSync(newActiveEnd);
+    await saveTasks(newStoredTasks);
+  }
+
   async function confirmRename(name: string) {
     if (editingTaskId === null) {
       setCurrentTaskName(name);
@@ -678,62 +797,46 @@ export default function Index() {
   }
 
   async function deleteTask(id: number) {
-    Alert.alert("Delete Task", "Remove this task?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete", style: "destructive",
-        onPress: async () => {
-          saveUndoSnapshot();
-          const index = tasksRef.current.findIndex(t => t.id === id);
-          if (index === -1) return;
+  Alert.alert("Delete Task", "Remove this task?", [
+    { text: "Cancel", style: "cancel" },
+    {
+      text: "Delete", style: "destructive",
+      onPress: async () => {
+        saveUndoSnapshot();
+        const allTasks = tasksRef.current;
+        const index = allTasks.findIndex(t => t.id === id);
+        if (index === -1) return;
 
-          // Cancel notification if set
-          const taskToDelete = tasksRef.current[index];
-          if (taskToDelete.notificationId) {
-            await cancelReminder(taskToDelete.notificationId);
-          }
+        // Cancel notification if set
+        if (allTasks[index].notificationId) {
+          await cancelReminder(allTasks[index].notificationId!);
+        }
 
-          const remaining = tasksRef.current.filter(t => t.id !== id);
+        // Calculate the gap left by the deleted task
+        const deletedStart = new Date(allTasks[index].startDate);
+        const deletedEnd = new Date(allTasks[index].endDate);
+        const gapMs = deletedEnd.getTime() - deletedStart.getTime();
 
-          // Re-link: shift the task immediately after the deleted one
-          // so its startDate matches the endDate of the task before it.
-          // Maintain each subsequent task's original duration.
-          if (index < remaining.length) {
-            const prevEndDate = index === 0
-              ? null
-              : new Date(remaining[index - 1].endDate);
+        // Remove the deleted task
+        const remaining = allTasks.filter(t => t.id !== id);
 
-            // Shift from the gap forward
-            let shiftMs = 0;
-            if (prevEndDate) {
-              const taskAfter = remaining[index];
-              shiftMs = prevEndDate.getTime() - new Date(taskAfter.startDate).getTime();
-            } else {
-              // Deleted the first task — shift subsequent tasks back to fill gap
-              const deletedStart = new Date(taskToDelete.startDate);
-              const deletedEnd = new Date(taskToDelete.endDate);
-              shiftMs = deletedStart.getTime() - deletedEnd.getTime();
-            }
+        // Shift all tasks that came AFTER the deleted one
+        const relinked = remaining.map((task, i) => {
+          if (i < index) return task; // tasks before deleted one — unchanged
+          const newStart = new Date(new Date(task.startDate).getTime() - gapMs);
+          const newEnd = new Date(new Date(task.endDate).getTime() - gapMs);
+          return { ...task, startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
+        });
 
-            if (shiftMs !== 0) {
-              const relinked = remaining.map((task, i) => {
-                if (i < index) return task; // tasks before deleted one unchanged
-                const newStart = new Date(task.startDate);
-                const newEnd = new Date(task.endDate);
-                newStart.setTime(newStart.getTime() + shiftMs);
-                newEnd.setTime(newEnd.getTime() + shiftMs);
-                return { ...task, startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
-              });
-              await saveTasks(relinked);
-              return;
-            }
-          }
+        // Shift active task too
+        setStartDateSync(new Date(startDateRef.current.getTime() - gapMs));
+        setEndDateSync(new Date(endDateRef.current.getTime() - gapMs));
 
-          await saveTasks(remaining);
-        },
+        await saveTasks(relinked);
       },
-    ]);
-  }
+    },
+  ]);
+}
 
 
   async function deleteMilestone(id: number) {
@@ -1330,65 +1433,80 @@ export default function Index() {
         <View style={styles.taskSection}>
           <Text style={[styles.taskSectionTitle, { color: theme.muted }]}>PROJECT TIMELINE</Text>
 
-          {tasks.map((task, i) => (
+          {/* Build combined list for rendering */}
+          {[
+            ...tasks.map((t, i) => ({ ...t, isActive: false, listIndex: i })),
+            {
+              id: -1,
+              name: currentTaskName,
+              startDate: startDate.toISOString(),
+              endDate: endDate.toISOString(),
+              color: currentTaskColor,
+              duration,
+              unit,
+              isActive: true,
+              listIndex: tasks.length,
+            },
+          ].map((item, i, arr) => (
             <TouchableOpacity
-              key={task.id}
+              key={item.id}
               style={[styles.taskItem, { backgroundColor: theme.card }]}
-              onLongPress={() => deleteTask(task.id)}
+              onLongPress={() => {
+                if (item.isActive) {
+                  if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  Alert.alert(
+                    item.name,
+                    'What would you like to do?',
+                    [
+                      { text: 'Rename', onPress: handleRenameCurrentTask },
+                      { text: 'Delete', style: 'destructive', onPress: handleDeleteActiveTask },
+                      { text: 'Cancel', style: 'cancel' },
+                    ]
+                  );
+                } else {
+                  deleteTask(item.id);
+                }
+              }}
+              delayLongPress={400}
             >
-              <View style={[styles.taskColorBar, { backgroundColor: task.color }]} />
+              <View style={[styles.taskColorBar, { backgroundColor: item.color }]} />
               <View style={styles.taskItemContent}>
-                <TouchableOpacity onPress={() => handleRenameTask(task.id)}>
-                  <Text style={[styles.taskItemName, { color: theme.text }]}>{task.name} <Text style={styles.editHint}>✎</Text></Text>
+                <TouchableOpacity onPress={() => item.isActive ? handleRenameCurrentTask() : handleRenameTask(item.id)}>
+                  <Text style={[styles.taskItemName, { color: theme.text }]}>
+                    {item.name} <Text style={styles.editHint}>✎</Text>
+                  </Text>
                 </TouchableOpacity>
                 <Text style={[styles.taskItemDates, { color: theme.muted }]}>
-                  {formatDate(new Date(task.startDate))} → {formatDate(new Date(task.endDate))}
+                  {formatDate(new Date(item.startDate))} → {formatDate(new Date(item.endDate))}
                 </Text>
-                <Text style={[styles.taskItemDuration, { color: task.color }]}>{task.duration} {task.unit}</Text>
+                <Text style={[styles.taskItemDuration, { color: item.color }]}>
+                  {item.isActive ? duration : item.duration} {item.unit}
+                </Text>
               </View>
               <View style={styles.taskRight}>
-                {task.reminderDays && (
+                {item.reminderDays && (
                   <Text style={styles.reminderBell}>🔔</Text>
                 )}
                 <Text style={[styles.taskNum, { color: theme.muted }]}>#{i + 1}</Text>
+                <View style={styles.moveButtons}>
+                  <TouchableOpacity
+                    onPress={() => handleMoveTask(i, 'up')}
+                    disabled={i === 0}
+                    style={styles.moveBtn}
+                  >
+                    <Text style={[styles.moveBtnText, { color: i === 0 ? theme.border : theme.muted }]}>▲</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleMoveTask(i, 'down')}
+                    disabled={i === arr.length - 1}
+                    style={styles.moveBtn}
+                  >
+                    <Text style={[styles.moveBtnText, { color: i === arr.length - 1 ? theme.border : theme.muted }]}>▼</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </TouchableOpacity>
           ))}
-
-        
-          {/* Active current task */}
-<TouchableOpacity
-  style={[styles.taskItem, { backgroundColor: theme.card }]}
-  onLongPress={() => {
-    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert(
-      'Active Task',
-      'What would you like to do?',
-      [
-        { text: 'Rename', onPress: handleRenameCurrentTask },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: handleDeleteActiveTask,
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
-  }}
-
->
-  <View style={[styles.taskColorBar, { backgroundColor: currentTaskColor }]} />
-  <View style={styles.taskItemContent}>
-    <TouchableOpacity onPress={handleRenameCurrentTask}>
-      <Text style={[styles.taskItemName, { color: theme.text }]}>{currentTaskName} <Text style={styles.editHint}>✎</Text></Text>
-    </TouchableOpacity>
-    <Text style={[styles.taskItemDates, { color: theme.muted }]}>{formatDate(startDate)} → {formatDate(endDate)}</Text>
-    <Text style={[styles.taskItemDuration, { color: currentTaskColor }]}>{duration} {unit}</Text>
-  </View>
-  <View style={styles.activeBadge}>
-    <Text style={styles.activeBadgeText}>ACTIVE</Text>
-  </View>
-</TouchableOpacity>
 
           {/* Milestones */}
           {milestones
@@ -1417,7 +1535,10 @@ export default function Index() {
               </TouchableOpacity>
             ))}
 
-          <Text style={[styles.savesHint, { color: theme.border }]}>Tap name to rename · Hold to delete</Text>
+          <Text style={[styles.savesHint, { color: theme.border }]}>
+            Tap name to rename · Hold to delete
+          </Text>
+
 
           <TouchableOpacity
             style={[styles.ganttBtn, { borderColor: theme.border }]}
@@ -1550,6 +1671,18 @@ const styles = StyleSheet.create({
     width: '100%',
     gap: 8,
     marginBottom: 12,
+  },
+  moveButtons: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    marginLeft: 4,
+  },
+  moveBtn: {
+    padding: 4,
+  },
+  moveBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   toolbarBtn: {
     flex: 1,
