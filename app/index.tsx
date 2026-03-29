@@ -568,6 +568,45 @@ export default function Index() {
     setEditingTaskId(id);
     setRenameModalVisible(true);
   }
+  function handleDeleteActiveTask() {
+    Alert.alert(
+      'Delete Task',
+      'Remove this task?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            saveUndoSnapshot();
+            if (tasksRef.current.length === 0) {
+              // No previous tasks — just reset to defaults
+              const newStart = new Date();
+              const newEnd = new Date();
+              newEnd.setDate(newEnd.getDate() + 30);
+              setStartDateSync(newStart);
+              setEndDateSync(newEnd);
+              setCurrentTaskName('Current Task');
+              currentTaskNameRef.current = 'Current Task';
+              return;
+            }
+            // Pop the last stored task and make it the new active task
+            const lastTask = tasksRef.current[tasksRef.current.length - 1];
+            const updated = tasksRef.current.slice(0, -1);
+            await saveTasks(updated);
+            setStartDateSync(new Date(lastTask.startDate));
+            setEndDateSync(new Date(lastTask.endDate));
+            setCurrentTaskName(lastTask.name);
+            currentTaskNameRef.current = lastTask.name;
+            // Cancel its notification if it had one
+            if (lastTask.notificationId) {
+              await cancelReminder(lastTask.notificationId);
+            }
+          },
+        },
+      ]
+    );
+  }
 
   async function confirmRename(name: string) {
     if (editingTaskId === null) {
@@ -645,16 +684,57 @@ export default function Index() {
         text: "Delete", style: "destructive",
         onPress: async () => {
           saveUndoSnapshot();
-          const taskToDelete = tasksRef.current.find(t => t.id === id);
-          if (taskToDelete?.notificationId) {
+          const index = tasksRef.current.findIndex(t => t.id === id);
+          if (index === -1) return;
+
+          // Cancel notification if set
+          const taskToDelete = tasksRef.current[index];
+          if (taskToDelete.notificationId) {
             await cancelReminder(taskToDelete.notificationId);
           }
-          const updated = tasksRef.current.filter((t) => t.id !== id);
-          await saveTasks(updated);
+
+          const remaining = tasksRef.current.filter(t => t.id !== id);
+
+          // Re-link: shift the task immediately after the deleted one
+          // so its startDate matches the endDate of the task before it.
+          // Maintain each subsequent task's original duration.
+          if (index < remaining.length) {
+            const prevEndDate = index === 0
+              ? null
+              : new Date(remaining[index - 1].endDate);
+
+            // Shift from the gap forward
+            let shiftMs = 0;
+            if (prevEndDate) {
+              const taskAfter = remaining[index];
+              shiftMs = prevEndDate.getTime() - new Date(taskAfter.startDate).getTime();
+            } else {
+              // Deleted the first task — shift subsequent tasks back to fill gap
+              const deletedStart = new Date(taskToDelete.startDate);
+              const deletedEnd = new Date(taskToDelete.endDate);
+              shiftMs = deletedStart.getTime() - deletedEnd.getTime();
+            }
+
+            if (shiftMs !== 0) {
+              const relinked = remaining.map((task, i) => {
+                if (i < index) return task; // tasks before deleted one unchanged
+                const newStart = new Date(task.startDate);
+                const newEnd = new Date(task.endDate);
+                newStart.setTime(newStart.getTime() + shiftMs);
+                newEnd.setTime(newEnd.getTime() + shiftMs);
+                return { ...task, startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
+              });
+              await saveTasks(relinked);
+              return;
+            }
+          }
+
+          await saveTasks(remaining);
         },
       },
     ]);
   }
+
 
   async function deleteMilestone(id: number) {
     const milestoneToDelete = milestonesRef.current.find(m => m.id === id);
@@ -1275,21 +1355,40 @@ export default function Index() {
             </TouchableOpacity>
           ))}
 
+        
           {/* Active current task */}
-          <TouchableOpacity
-            style={[styles.taskItem, { backgroundColor: theme.card }]}
-            onPress={handleRenameCurrentTask}
-          >
-            <View style={[styles.taskColorBar, { backgroundColor: currentTaskColor }]} />
-            <View style={styles.taskItemContent}>
-              <Text style={[styles.taskItemName, { color: theme.text }]}>{currentTaskName} <Text style={styles.editHint}>✎</Text></Text>
-              <Text style={[styles.taskItemDates, { color: theme.muted }]}>{formatDate(startDate)} → {formatDate(endDate)}</Text>
-              <Text style={[styles.taskItemDuration, { color: currentTaskColor }]}>{duration} {unit}</Text>
-            </View>
-            <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>ACTIVE</Text>
-            </View>
-          </TouchableOpacity>
+<TouchableOpacity
+  style={[styles.taskItem, { backgroundColor: theme.card }]}
+  onLongPress={() => {
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      'Active Task',
+      'What would you like to do?',
+      [
+        { text: 'Rename', onPress: handleRenameCurrentTask },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: handleDeleteActiveTask,
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  }}
+
+>
+  <View style={[styles.taskColorBar, { backgroundColor: currentTaskColor }]} />
+  <View style={styles.taskItemContent}>
+    <TouchableOpacity onPress={handleRenameCurrentTask}>
+      <Text style={[styles.taskItemName, { color: theme.text }]}>{currentTaskName} <Text style={styles.editHint}>✎</Text></Text>
+    </TouchableOpacity>
+    <Text style={[styles.taskItemDates, { color: theme.muted }]}>{formatDate(startDate)} → {formatDate(endDate)}</Text>
+    <Text style={[styles.taskItemDuration, { color: currentTaskColor }]}>{duration} {unit}</Text>
+  </View>
+  <View style={styles.activeBadge}>
+    <Text style={styles.activeBadgeText}>ACTIVE</Text>
+  </View>
+</TouchableOpacity>
 
           {/* Milestones */}
           {milestones
