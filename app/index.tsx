@@ -22,14 +22,13 @@ import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Modal,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1146,7 +1145,7 @@ export default function Index() {
   }
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
+    <View style={[styles.safeArea, { backgroundColor: theme.bg, paddingTop: insets.top }]}>
       <StatusBar barStyle={settings.darkMode ? "light-content" : "dark-content"} backgroundColor={theme.bg} />
       <ScrollView
   style={styles.scroll}
@@ -1691,7 +1690,7 @@ export default function Index() {
         onDone={handleOnboardingDone}
       />
 
-    </SafeAreaView>
+    </View>
   );
 }
 
