@@ -160,7 +160,9 @@ export default function Index() {
   future.setDate(today.getDate() + 30);
 
   const [startDate, setStartDate] = useState(today);
+  const [wheelScale, setWheelScale] = useState(1.0);
   const [endDate, setEndDate] = useState(future);
+  const [zoomLevel, setZoomLevel] = useState(1);
   const [unit, setUnit] = useState("Days");
   const [unitIndex, setUnitIndex] = useState(0);
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -1249,6 +1251,8 @@ export default function Index() {
         {/* The Wheel */}
         <DateWheel
           startDate={startDate}
+          physicalScale={wheelScale}
+          onScaleChange={setWheelScale}
           endDate={endDate}
           duration={duration}
           unit={unit}
@@ -1289,6 +1293,35 @@ export default function Index() {
             setDragDisplayDates(prev => prev ? { ...prev, start: date } : null);
           }}
         />
+
+        {/* Zoom controls */}
+        <View style={styles.zoomRow}>
+          <TouchableOpacity
+            style={[styles.zoomBtn, { opacity: wheelScale <= 1.0 ? 0.3 : 1 }]}
+            onPress={() => setWheelScale(s => Math.max(1.0, Math.round((s - 0.5) * 2) / 2))}
+            disabled={wheelScale <= 1.0}
+          >
+            <Text style={[styles.zoomBtnText, { color: theme.muted }]}>−</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setWheelScale(1.0)}
+            disabled={wheelScale === 1.0}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.zoomLabel, { color: wheelScale === 1.0 ? theme.border : theme.accent }]}>
+              {wheelScale === 1.0 ? '1×' : `${wheelScale}×  ↺`}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.zoomBtn, { opacity: wheelScale >= 4.0 ? 0.3 : 1 }]}
+            onPress={() => setWheelScale(s => Math.min(4.0, Math.round((s + 0.5) * 2) / 2))}
+            disabled={wheelScale >= 4.0}
+          >
+            <Text style={[styles.zoomBtnText, { color: theme.muted }]}>+</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Active task dates */}
         <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
@@ -1462,7 +1495,10 @@ export default function Index() {
           ].map((item, i, arr) => (
             <TouchableOpacity
               key={item.id}
-              style={[styles.taskItem, { backgroundColor: theme.card }]}
+              style={[
+  styles.taskItem,
+  { backgroundColor: item.id === tappedTaskId ? theme.cardHighlight : theme.card },
+]}
               onLongPress={() => {
                 if (item.isActive) {
                   if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1672,6 +1708,36 @@ const lightTheme = {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   scroll: { flex: 1 },
+  zoomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+    marginTop: -4,
+    marginBottom: 8,
+  },
+  zoomBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1C2B38',
+    borderWidth: 1,
+    borderColor: '#2A3F52',
+  },
+  zoomBtnText: {
+    fontSize: 20,
+    fontWeight: '300',
+    lineHeight: 26,
+  },
+  zoomLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    minWidth: 48,
+    textAlign: 'center',
+  },
   toolbar: {
     flexDirection: 'row',
     width: '100%',
