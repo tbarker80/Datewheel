@@ -50,6 +50,18 @@ export interface Task {
   notificationId?: string;
   reminderDays?: number;
 }
+export interface Task {
+  id: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  color: string;
+  duration: string;
+  unit: string;
+  notificationId?: string;
+  reminderDays?: number;
+  lagDays?: number;   // ← ADD: negative = overlap, positive = gap, undefined = flush
+}
 
 export interface Milestone {
   id: number;
@@ -145,6 +157,7 @@ interface Props {
   highlightedTaskDuration: string;
   isLocked: boolean;
   physicalScale: number;
+  onBoundaryTap?: (taskIndex: number) => void;
   onDurationTap: () => void;
   onTimelineShift: (shiftDays: number) => void;
   onUnitToggle: () => void;
@@ -174,6 +187,7 @@ export default function DateWheel({
   highlightedTaskDuration,
   isLocked,
   physicalScale,
+  onBoundaryTap,
   onDurationTap,
   onTimelineShift,
   onUnitToggle,
@@ -439,6 +453,18 @@ export default function DateWheel({
     const dy = y - R;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
+    // Check if tap is on a boundary dot
+    if (onBoundaryTap) {
+      for (let i = 0; i < tasks.length; i++) {
+        const dot = boundaryDots[i];
+        if (dist(x, y, dot.x, dot.y) < 24) {
+          onBoundaryTap(i);
+          return;
+        }
+      }
+    }
+
+
     if (distance > RING_RADIUS + 20) { onTaskTap(null); return; }
     if (distance < RING_RADIUS - 20) { return; }
 
@@ -633,24 +659,39 @@ export default function DateWheel({
 
           {/* Boundary dots */}
           {tasks.map((task, i) => {
-            const tEndDay = getDayOfYear(new Date(task.endDate));
-            const tEndXY = angleToXY(dayToAngle(tEndDay), RING_RADIUS);
-            const isActive = activeDot === i;
-            return (
-              <React.Fragment key={task.id}>
-                {isActive && <Circle cx={tEndXY.x} cy={tEndXY.y} r={20} fill={task.color} fillOpacity={0.2}/>}
-                <Circle cx={tEndXY.x} cy={tEndXY.y} r={isActive ? 13 : 8}
-                  fill={task.color} stroke="#FFFFFF"
-                  strokeWidth={isActive ? 2.5 : 1.5}
-                  strokeOpacity={isActive ? 0.9 : 0.4}/>
-                {task.reminderDays && !isActive && (
-                  <Circle cx={tEndXY.x} cy={tEndXY.y} r={13}
-                    fill="none" stroke="#FFFFFF" strokeWidth={1}
-                    strokeOpacity={0.5} strokeDasharray="2 2"/>
-                )}
-              </React.Fragment>
-            );
-          })}
+  const tEndDay = getDayOfYear(new Date(task.endDate));
+  const tEndXY = angleToXY(dayToAngle(tEndDay), RING_RADIUS);
+  const isActive = activeDot === i;
+  const nextTask = tasks[i + 1];
+  const hasLag = nextTask?.lagDays !== undefined && nextTask.lagDays !== 0;
+  const isOverlapLag = hasLag && nextTask!.lagDays! < 0;
+
+  return (
+    <React.Fragment key={task.id}>
+      {isActive && <Circle cx={tEndXY.x} cy={tEndXY.y} r={20} fill={task.color} fillOpacity={0.2}/>}
+      <Circle cx={tEndXY.x} cy={tEndXY.y} r={isActive ? 13 : 8}
+        fill={task.color} stroke="#FFFFFF"
+        strokeWidth={isActive ? 2.5 : 1.5}
+        strokeOpacity={isActive ? 0.9 : 0.4}/>
+      {task.reminderDays && !isActive && (
+        <Circle cx={tEndXY.x} cy={tEndXY.y} r={13}
+          fill="none" stroke="#FFFFFF" strokeWidth={1}
+          strokeOpacity={0.5} strokeDasharray="2 2"/>
+      )}
+      {/* Lag/overlap indicator ring */}
+      {hasLag && !isActive && (
+        <Circle
+          cx={tEndXY.x} cy={tEndXY.y}
+          r={16}
+          fill="none"
+          stroke={isOverlapLag ? '#EF4444' : '#F0A500'}
+          strokeWidth={1.5}
+          strokeOpacity={0.8}
+        />
+      )}
+    </React.Fragment>
+  );
+})}
 
           {/* Milestone diamonds */}
           {milestones.map((milestone) => {
