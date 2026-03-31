@@ -1388,41 +1388,41 @@ export default function Index() {
           </View>
         </View>
 
-        {/* Compact toolbar: Open · Save · Undo · Reset */}
-        <View style={styles.toolbar}>
-          <TouchableOpacity
-            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => requirePro(() => setOpenVisible(true))}
-          >
-            <Text style={styles.toolbarIcon}>📂</Text>
-            <Text style={[styles.toolbarLabel, { color: theme.muted }]}>Open{!isPro ? ' 🔒' : ''}</Text>
-          </TouchableOpacity>
+        {/* Compact toolbar: New · Open · Save · Undo */}
+<View style={styles.toolbar}>
+  <TouchableOpacity
+    style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+    onPress={handleReset}
+  >
+    <Text style={[styles.toolbarIcon, { color: theme.muted }]}>＋</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>New</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => setSaveVisible(true)}
-          >
-            <Text style={styles.toolbarIcon}>💾</Text>
-            <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save</Text>
-          </TouchableOpacity>
+  <TouchableOpacity
+    style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+    onPress={() => requirePro(() => setOpenVisible(true))}
+  >
+    <Text style={[styles.toolbarIcon, { color: theme.muted }]}>📂</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Open{!isPro ? ' 🔒' : ''}</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 0.35 }]}
-            onPress={handleUndo}
-            disabled={!canUndo}
-          >
-            <Text style={styles.toolbarIcon}>↩</Text>
-            <Text style={[styles.toolbarLabel, { color: canUndo ? theme.accent : theme.muted }]}>Undo</Text>
-          </TouchableOpacity>
+  <TouchableOpacity
+    style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+    onPress={() => setSaveVisible(true)}
+  >
+    <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={handleReset}
-          >
-            <Text style={styles.toolbarIcon}>↺</Text>
-            <Text style={[styles.toolbarLabel, { color: theme.muted }]}>Reset</Text>
-          </TouchableOpacity>
-        </View>
+  <TouchableOpacity
+  style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 0.35 }]}
+  onPress={handleUndo}
+  disabled={!canUndo}
+>
+  <Text style={[styles.toolbarIcon, { color: theme.accent, fontSize: 22 }]}>↩</Text>
+  <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Undo</Text>
+</TouchableOpacity>
+</View>
 
 
 
@@ -2066,8 +2066,8 @@ zoomResetText: {
   },
 
   toolbarIcon: {
-    fontSize: 16,
-  },
+  fontSize: 16,
+},
   toolbarLabel: {
     fontSize: 10,
     fontWeight: '600',
