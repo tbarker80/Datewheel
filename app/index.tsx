@@ -33,6 +33,7 @@ import {
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as XLSX from 'xlsx';
 import { registerDatewheelHandler } from './_layout';
 
 function daysBetween(start: Date, end: Date) {
@@ -1209,6 +1210,189 @@ export default function Index() {
     }
   }
 
+  async function handleExportXLSX() {
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    const allTasks = [
+      ...tasksRef.current,
+      {
+        id: -1,
+        name: currentTaskNameRef.current,
+        startDate: startDateRef.current.toISOString(),
+        endDate: endDateRef.current.toISOString(),
+        color: currentTaskColor,
+        duration,
+        unit,
+        notificationId: undefined,
+        reminderDays: undefined,
+      } as Task,
+    ];
+
+    // ── Sheet 1: Project Summary ───────────────────────────────────────────
+
+    const wb = XLSX.utils.book_new();
+
+    // Header rows
+    const summaryData: any[][] = [
+      ['DATE WHEEL — Project Export'],
+      [`Generated: ${formatDate(new Date())}`],
+      [],
+      ['#', 'Task Name', 'Start Date', 'End Date', 'Duration', 'Unit', 'Reminder', 'Overlap'],
+    ];
+
+    // Task rows
+    allTasks.forEach((task, i) => {
+      const isActive = task.id === -1;
+      summaryData.push([
+        i + 1,
+        task.name + (isActive ? ' (Active)' : ''),
+        formatDate(new Date(task.startDate)),
+        formatDate(new Date(task.endDate)),
+        isActive ? duration : task.duration,
+        task.unit,
+        task.reminderDays ? `${task.reminderDays} days before` : '',
+        (task as any).lagDays !== undefined && (task as any).lagDays !== 0
+          ? `${(task as any).lagDays < 0 ? 'Overlap' : 'Gap'}: ${Math.abs((task as any).lagDays)}d`
+          : '',
+      ]);
+    });
+
+    // Milestone rows
+    if (milestonesRef.current.length > 0) {
+      summaryData.push([]);
+      summaryData.push(['', 'MILESTONES', 'Date', '', '', '', '', '']);
+      milestonesRef.current
+        .slice()
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .forEach(m => {
+          summaryData.push([
+            '',
+            m.name,
+            formatDate(new Date(m.date)),
+            getDayName(new Date(m.date)),
+            '', '', '', '',
+          ]);
+        });
+    }
+
+    // Total row
+    summaryData.push([]);
+    summaryData.push(['', 'TOTAL DURATION', '', '', totalDuration || duration, unit, '', '']);
+
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+
+    // Column widths
+    summarySheet['!cols'] = [
+      { wch: 4 },   // #
+      { wch: 28 },  // Task Name
+      { wch: 14 },  // Start
+      { wch: 14 },  // End
+      { wch: 10 },  // Duration
+      { wch: 14 },  // Unit
+      { wch: 18 },  // Reminder
+      { wch: 16 },  // Overlap
+    ];
+
+    XLSX.utils.book_append_sheet(wb, summarySheet, 'Project Summary');
+
+    // ── Sheet 2: Gantt ─────────────────────────────────────────────────────
+
+    const ganttData: any[][] = [];
+
+    // Calculate date range
+    const firstStart = tasksRef.current.length > 0
+      ? new Date(tasksRef.current[0].startDate)
+      : startDateRef.current;
+    const lastEnd = endDateRef.current;
+
+    // Build week columns
+    const weeks: Date[] = [];
+    const cursor = new Date(firstStart);
+    cursor.setDate(cursor.getDate() - cursor.getDay()); // align to Sunday
+    while (cursor <= lastEnd) {
+      weeks.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 7);
+    }
+
+    // Header row — week start dates
+    const ganttHeader = ['Task', 'Start', 'End', 'Duration', ...weeks.map(w =>
+      w.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    )];
+    ganttData.push(ganttHeader);
+
+    // Task rows
+    allTasks.forEach(task => {
+      const taskStart = new Date(task.startDate);
+      const taskEnd = new Date(task.endDate);
+      const isActive = task.id === -1;
+      const row: any[] = [
+        task.name + (isActive ? ' ●' : ''),
+        formatDate(taskStart),
+        formatDate(taskEnd),
+        (isActive ? duration : task.duration) + ' ' + task.unit,
+        ...weeks.map(weekStart => {
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 7);
+          // Mark cell if task overlaps this week
+          if (taskStart < weekEnd && taskEnd > weekStart) return '█';
+          return '';
+        }),
+      ];
+      ganttData.push(row);
+    });
+
+    // Milestone rows
+    milestonesRef.current.forEach(m => {
+      const mDate = new Date(m.date);
+      const row: any[] = [
+        `◆ ${m.name}`,
+        formatDate(mDate),
+        '',
+        '',
+        ...weeks.map(weekStart => {
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 7);
+          if (mDate >= weekStart && mDate < weekEnd) return '◆';
+          return '';
+        }),
+      ];
+      ganttData.push(row);
+    });
+
+    const ganttSheet = XLSX.utils.aoa_to_sheet(ganttData);
+
+    // Column widths for Gantt
+    ganttSheet['!cols'] = [
+      { wch: 24 }, // Task name
+      { wch: 12 }, // Start
+      { wch: 12 }, // End
+      { wch: 12 }, // Duration
+      ...weeks.map(() => ({ wch: 6 })), // week columns
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ganttSheet, 'Gantt');
+
+    // ── Write and share ────────────────────────────────────────────────────
+
+    try {
+      const wbOut = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+      const fileName = `DateWheel_${new Date().toLocaleDateString('en-US', {
+        month: '2-digit', day: '2-digit', year: 'numeric'
+      }).replace(/\//g, '-')}.xlsx`;
+      const filePath = `${FileSystem.cacheDirectory}${fileName}`;
+      await FileSystem.writeAsStringAsync(filePath, wbOut, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      await Sharing.shareAsync(filePath, {
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: 'Export Date Wheel as Excel',
+        UTI: 'com.microsoft.excel.xlsx',
+      });
+    } catch (e) {
+      Alert.alert('Export failed', 'Could not generate the Excel file. Please try again.');
+    }
+  }
+
   async function handleExportPDF() {
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const allTasks = [
@@ -1690,6 +1874,14 @@ export default function Index() {
                   <Text style={styles.saveOptionSub}>Share with Excel, Sheets, MS Project & more</Text>
                 </View>
               </TouchableOpacity>
+              <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportXLSX(); }}>
+                <Text style={styles.saveOptionIcon}>📊</Text>
+                <View style={styles.saveOptionText}>
+                  <Text style={styles.saveOptionTitle}>Export as Excel</Text>
+                  <Text style={styles.saveOptionSub}>Color-coded tasks with Gantt sheet</Text>
+                </View>
+              </TouchableOpacity>
+
               <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportPDF(); }}>
                 <Text style={styles.saveOptionIcon}>📄</Text>
                 <View style={styles.saveOptionText}>
