@@ -1518,33 +1518,46 @@ export default function Index() {
         />
 
         {/* Zoom controls */}
-        <View style={styles.zoomRow}>
-          <TouchableOpacity
-            style={[styles.zoomBtn, { opacity: wheelScale <= 1.0 ? 0.3 : 1 }]}
-            onPress={() => setWheelScale(s => Math.max(1.0, Math.round((s - 0.5) * 2) / 2))}
-            disabled={wheelScale <= 1.0}
-          >
-            <Text style={[styles.zoomBtnText, { color: theme.muted }]}>−</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => setWheelScale(1.0)}
-            disabled={wheelScale === 1.0}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={[styles.zoomLabel, { color: wheelScale === 1.0 ? theme.border : theme.accent }]}>
-              {wheelScale === 1.0 ? '1×' : `${wheelScale}×  ↺`}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.zoomBtn, { opacity: wheelScale >= 4.0 ? 0.3 : 1 }]}
-            onPress={() => setWheelScale(s => Math.min(4.0, Math.round((s + 0.5) * 2) / 2))}
-            disabled={wheelScale >= 4.0}
-          >
-            <Text style={[styles.zoomBtnText, { color: theme.muted }]}>+</Text>
-          </TouchableOpacity>
-        </View>
+{wheelScale === 1.0 ? (
+  <View style={styles.zoomRow}>
+    <TouchableOpacity
+      style={[styles.zoomBtn, { opacity: 0.3 }]}
+      disabled
+    >
+      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>−</Text>
+    </TouchableOpacity>
+    <Text style={[styles.zoomLabel, { color: theme.border }]}>1×</Text>
+    <TouchableOpacity
+      style={styles.zoomBtn}
+      onPress={() => setWheelScale(1.5)}
+    >
+      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>+</Text>
+    </TouchableOpacity>
+  </View>
+) : (
+  <View style={styles.zoomRow}>
+    <TouchableOpacity
+      style={[styles.zoomBtn, { opacity: wheelScale <= 1.0 ? 0.3 : 1 }]}
+      onPress={() => setWheelScale(s => Math.max(1.0, Math.round((s - 0.5) * 2) / 2))}
+      disabled={wheelScale <= 1.0}
+    >
+      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>−</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      style={styles.zoomResetBtn}
+      onPress={() => setWheelScale(1.0)}
+    >
+      <Text style={[styles.zoomResetText, { color: theme.accent }]}>↺ Reset View</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      style={[styles.zoomBtn, { opacity: wheelScale >= 4.0 ? 0.3 : 1 }]}
+      onPress={() => setWheelScale(s => Math.min(4.0, Math.round((s + 0.5) * 2) / 2))}
+      disabled={wheelScale >= 4.0}
+    >
+      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>+</Text>
+    </TouchableOpacity>
+  </View>
+)}
 
         {/* Active task dates */}
         <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
@@ -1986,6 +1999,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2A3F52',
   },
+  zoomResetBtn: {
+  paddingHorizontal: 20,
+  paddingVertical: 8,
+  borderRadius: 10,
+  backgroundColor: '#1C2B38',
+  borderWidth: 1,
+  borderColor: '#2E7DBC',
+},
+zoomResetText: {
+  fontSize: 14,
+  fontWeight: '700',
+  letterSpacing: 0.5,
+},
   zoomBtnText: {
     fontSize: 20,
     fontWeight: '300',
