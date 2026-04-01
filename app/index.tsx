@@ -2,6 +2,7 @@ import DateWheel, { Milestone, Task, TASK_COLORS } from "@/components/datewheel"
 import GanttChart from "@/components/GanttChart";
 import { businessDaysWithHolidays } from "@/components/holidays";
 import LagEditModal from '@/components/LagEditModal';
+import MilestoneModal from "@/components/MilestoneModal";
 import {
   cancelReminder,
   requestNotificationPermissions,
@@ -898,6 +899,27 @@ export default function Index() {
     setEndDateSync(nextEnd);
     setTaskNameVisible(false);
   }
+  async function confirmAddMilestone(name: string, date: Date, reminderDays: number | null) {
+  saveUndoSnapshot();
+  let notificationId: string | undefined;
+  if (reminderDays !== null) {
+    const id = await scheduleReminder(name, date, reminderDays);
+    notificationId = id ?? undefined;
+  }
+  const newMilestone: Milestone = {
+    id: Date.now(),
+    name,
+    date: date.toISOString(),
+    color: MILESTONE_COLORS[milestonesRef.current.length % MILESTONE_COLORS.length],
+    notificationId,
+    reminderDays: reminderDays ?? undefined,
+  };
+  const updated = [...milestonesRef.current, newMilestone];
+  setMilestonesSync(updated);
+  await AsyncStorage.setItem("milestones", JSON.stringify(updated));
+  setMilestoneModalVisible(false);
+  if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+}
 
   async function confirmRenameMilestone(newName: string, _reminderDays: number | null) {
   if (!renamingMilestone) return;
@@ -2144,6 +2166,36 @@ export default function Index() {
         taskNumber={0}
         onConfirm={confirmRenameMilestone}
         onCancel={() => setRenamingMilestone(null)}
+      />
+      <MilestoneModal
+        visible={milestoneModalVisible}
+        defaultDate={endDateRef.current}
+        onConfirm={confirmAddMilestone}
+        onCancel={() => setMilestoneModalVisible(false)}
+      />
+      <DateTimePickerModal
+        isVisible={milestoneDatePickerVisible}
+        mode="date"
+        date={editingMilestoneId !== null
+          ? new Date(milestonesRef.current.find(m => m.id === editingMilestoneId)?.date || new Date())
+          : new Date()
+        }
+        onConfirm={(d) => {
+          if (editingMilestoneId !== null) {
+            saveUndoSnapshot();
+            const updated = milestonesRef.current.map(m =>
+              m.id === editingMilestoneId ? { ...m, date: d.toISOString() } : m
+            );
+            setMilestonesSync(updated);
+            AsyncStorage.setItem("milestones", JSON.stringify(updated));
+          }
+          setMilestoneDatePickerVisible(false);
+          setEditingMilestoneId(null);
+        }}
+        onCancel={() => {
+          setMilestoneDatePickerVisible(false);
+          setEditingMilestoneId(null);
+        }}
       />
       <OnboardingModal
         visible={onboardingVisible}
