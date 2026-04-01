@@ -1,3 +1,4 @@
+import CalendarView from "@/components/CalendarView";
 import DateWheel, { Milestone, Task, TASK_COLORS } from "@/components/datewheel";
 import GanttChart from "@/components/GanttChart";
 import { businessDaysWithHolidays, countHolidaysInRange, isHoliday } from "@/components/holidays";
@@ -23,6 +24,8 @@ import * as StoreReview from 'expo-store-review';
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
+  Dimensions,
   Modal,
   ScrollView,
   StatusBar,
@@ -32,6 +35,7 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
+import Svg, { Path as SvgPath } from 'react-native-svg';
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as XLSX from 'xlsx';
@@ -93,6 +97,17 @@ function getDayName(date: Date) {
 const UNITS = ["Days", "Weeks", "Months", "Business Days"];
 const MILESTONE_COLORS = ['#F0A500', '#EC4899', '#84CC16', '#2E9BFF', '#8B5CF6'];
 const MAX_UNDO_LEVELS = 5;
+
+// Corner button geometry
+const _SW = Dimensions.get('window').width;
+const C = Math.round(_SW * 0.5 * 0.28); // ~13% of screen width, scales with device
+const RO = 10;         // outer corner radius
+const CR = C - RO;     // pre-computed C - RO
+// SVG pie-wedge paths — each fills the dead corner outside the wheel circle
+const PATH_TL = `M 0,${RO} Q 0,0 ${RO},0 L ${C},0 A ${C},${C} 0 0,1 0,${C} Z`;
+const PATH_TR = `M ${C},${RO} Q ${C},0 ${CR},0 L 0,0 A ${C},${C} 0 0,0 ${C},${C} Z`;
+const PATH_BL = `M 0,${CR} Q 0,${C} ${RO},${C} L ${C},${C} A ${C},${C} 0 0,0 0,0 Z`;
+const PATH_BR = `M ${C},${CR} Q ${C},${C} ${CR},${C} L 0,${C} A ${C},${C} 0 0,1 ${C},0 Z`;
 
 const DEFAULT_SETTINGS: AppSettings = {
   darkMode: true,
@@ -207,6 +222,8 @@ export default function Index() {
   const [saveVisible, setSaveVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(false);
   const [ganttVisible, setGanttVisible] = useState(false);
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const wheelFade = useRef(new Animated.Value(1)).current;
   const [proModalVisible, setProModalVisible] = useState(false);
   const [milestoneModalVisible, setMilestoneModalVisible] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -2249,7 +2266,6 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("start")}>
               <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE START</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineStart)}</Text>
-              <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineStart)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', 1)}>
               <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
@@ -2262,7 +2278,6 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end")}>
               <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE END</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineEnd)}</Text>
-              <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineEnd)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', 1)}>
               <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
@@ -2270,82 +2285,147 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </View>
         </View>
 
-        {/* Lock toggle */}
-        <View style={styles.lockRow}>
+        {/* Wheel + 4 corner buttons */}
+        <View style={styles.wheelContainer}>
+          <Animated.View style={{ opacity: wheelFade }}>
+            <DateWheel
+              startDate={startDate}
+              physicalScale={wheelScale}
+              onScaleChange={setWheelScale}
+              endDate={endDate}
+              duration={duration}
+              unit={unit}
+              tasks={tasks}
+              milestones={milestones}
+              totalDuration={totalDuration}
+              holidayCountry={isPro ? settings.holidayCountry : "NONE"}
+              highlightedTaskId={tappedTaskId}
+              highlightedTaskDuration={highlightedTaskDuration}
+              onUnitToggle={handleUnitToggle}
+              onBoundaryDragStart={handleBoundaryDragStart}
+              onBoundaryChange={handleBoundaryChange}
+              onEndDragStart={handleEndDragStart}
+              onDragEnd={handleDragEnd}
+              onDragActive={handleDragActive}
+              onTaskTap={handleTaskTap}
+              isLocked={isLocked}
+              activeLagDays={activeLagDays}
+              onTimelineShift={handleTimelineShift}
+              onBoundaryTap={(taskIndex) => {
+                const isLastStoredTask = taskIndex === tasksRef.current.length - 1;
+                if (isLastStoredTask && activeLagDays !== undefined) {
+                  setLagEditTaskIndex(-99);
+                  setLagEditVisible(true);
+                } else {
+                  const task = tasksRef.current[taskIndex + 1];
+                  if (task && (task.lagDays !== undefined || tappedTaskId !== null)) {
+                    setLagEditTaskIndex(taskIndex + 1);
+                    setLagEditVisible(true);
+                  }
+                }
+              }}
+              onDurationTap={() => {
+                savedTappedTaskIdRef.current = tappedTaskId;
+                const editingTask = tappedTaskId !== null
+                  ? tasksRef.current.find(t => t.id === tappedTaskId)
+                  : null;
+                const editValue = editingTask
+                  ? calcDuration(new Date(editingTask.startDate), new Date(editingTask.endDate), unit, settings.holidayCountry)
+                  : duration;
+                setDurationEditValue(editValue);
+                setDurationEditVisible(true);
+              }}
+              onEndDateChange={(date) => {
+                if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setEndDateSync(date);
+                setDragDisplayDates(prev => prev ? { ...prev, end: date } : null);
+              }}
+              onStartDateChange={(date) => {
+                if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setStartDateSync(date);
+                setDragDisplayDates(prev => prev ? { ...prev, start: date } : null);
+              }}
+            />
+          </Animated.View>
+
+          {/* TL: Lock Timeline */}
           <TouchableOpacity
-            style={[styles.lockToggle, isLocked && styles.lockToggleActive]}
+            style={[styles.cornerBtn, styles.cornerTL]}
             onPress={() => {
-              setIsLocked(!isLocked);
+              setIsLocked(l => !l);
               if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             }}
+            activeOpacity={0.75}
           >
-            <Text style={styles.lockToggleIcon}>{isLocked ? '🔒' : '🔓'}</Text>
-            <Text style={[styles.lockToggleText, isLocked && { color: '#F0A500' }]}>
-              {isLocked ? 'Timeline Locked — drag wheel to shift' : 'Lock Timeline'}
-            </Text>
+            <Svg width={C} height={C}>
+              <SvgPath d={PATH_TL} fill={isLocked ? '#1A1200' : theme.card} opacity={0.92} />
+              <SvgPath d={PATH_TL} fill="none" stroke="#F0A500" strokeWidth={1} />
+            </Svg>
+            <View style={styles.cornerContentTL}>
+              <View style={styles.cornerLockIcon} />
+              <Text style={[styles.cornerLabel, { color: '#F0A500' }]}>
+                {isLocked ? 'Locked' : 'Lock'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* TR: Calendar */}
+          <TouchableOpacity
+            style={[styles.cornerBtn, styles.cornerTR]}
+            onPress={() => requirePro(() => {
+              Animated.timing(wheelFade, { toValue: 0, duration: 350, useNativeDriver: true }).start();
+              setCalendarVisible(true);
+            })}
+            activeOpacity={0.75}
+          >
+            <Svg width={C} height={C}>
+              <SvgPath d={PATH_TR} fill={theme.card} opacity={0.92} />
+              <SvgPath d={PATH_TR} fill="none" stroke={isPro ? theme.accent : theme.border} strokeWidth={1} />
+            </Svg>
+            <View style={styles.cornerContentTR}>
+              <View style={[styles.cornerCalIcon, { borderColor: isPro ? theme.accent : theme.muted }]} />
+              <Text style={[styles.cornerLabel, isPro && { color: theme.accent }]}>
+                {isPro ? 'Cal' : '🔒Cal'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* BL: Add Task */}
+          <TouchableOpacity
+            style={[styles.cornerBtn, styles.cornerBL]}
+            onPress={handleAddTask}
+            activeOpacity={0.75}
+          >
+            <Svg width={C} height={C}>
+              <SvgPath d={PATH_BL} fill={theme.card} opacity={0.92} />
+              <SvgPath d={PATH_BL} fill="none" stroke={currentTaskColor} strokeWidth={1} />
+            </Svg>
+            <View style={styles.cornerContentBL}>
+              <View style={[styles.cornerDot, { backgroundColor: currentTaskColor }]} />
+              <Text style={[styles.cornerLabel, { color: currentTaskColor }]}>
+                {(!isPro && tasksRef.current.length > 0) ? '🔒Task' : '+ Task'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* BR: Add Milestone */}
+          <TouchableOpacity
+            style={[styles.cornerBtn, styles.cornerBR]}
+            onPress={() => requirePro(() => setMilestoneModalVisible(true))}
+            activeOpacity={0.75}
+          >
+            <Svg width={C} height={C}>
+              <SvgPath d={PATH_BR} fill={theme.card} opacity={0.92} />
+              <SvgPath d={PATH_BR} fill="none" stroke={isPro ? '#F0A500' : theme.border} strokeWidth={1} />
+            </Svg>
+            <View style={styles.cornerContentBR}>
+              <View style={styles.cornerDiamond} />
+              <Text style={[styles.cornerLabel, isPro && { color: '#F0A500' }]}>
+                {isPro ? '+Mile' : '🔒Mile'}
+              </Text>
+            </View>
           </TouchableOpacity>
         </View>
-
-        {/* The Wheel */}
-        <DateWheel
-          startDate={startDate}
-          physicalScale={wheelScale}
-          onScaleChange={setWheelScale}
-          endDate={endDate}
-          duration={duration}
-          unit={unit}
-          tasks={tasks}
-          milestones={milestones}
-          totalDuration={totalDuration}
-          holidayCountry={isPro ? settings.holidayCountry : "NONE"}
-          highlightedTaskId={tappedTaskId}
-          highlightedTaskDuration={highlightedTaskDuration}
-          onUnitToggle={handleUnitToggle}
-          onBoundaryDragStart={handleBoundaryDragStart}
-          onBoundaryChange={handleBoundaryChange}
-          onEndDragStart={handleEndDragStart}
-          onDragEnd={handleDragEnd}
-          onDragActive={handleDragActive}
-          onTaskTap={handleTaskTap}
-          isLocked={isLocked}
-          activeLagDays={activeLagDays}
-          onTimelineShift={handleTimelineShift}
-          onBoundaryTap={(taskIndex) => {
-            const isLastStoredTask = taskIndex === tasksRef.current.length - 1;
-            if (isLastStoredTask && activeLagDays !== undefined) {
-              // Boundary between last stored task and active task
-              setLagEditTaskIndex(-99); // sentinel for active task
-              setLagEditVisible(true);
-            } else {
-              const task = tasksRef.current[taskIndex + 1];
-              if (task && (task.lagDays !== undefined || tappedTaskId !== null)) {
-                setLagEditTaskIndex(taskIndex + 1);
-                setLagEditVisible(true);
-              }
-            }
-          }}
-          onDurationTap={() => {
-  savedTappedTaskIdRef.current = tappedTaskId; // save before it gets cleared
-  const editingTask = tappedTaskId !== null
-    ? tasksRef.current.find(t => t.id === tappedTaskId)
-    : null;
-  const editValue = editingTask
-    ? calcDuration(new Date(editingTask.startDate), new Date(editingTask.endDate), unit, settings.holidayCountry)
-    : duration;
-  setDurationEditValue(editValue);
-  setDurationEditVisible(true);
-}}
-          onEndDateChange={(date) => {
-            if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setEndDateSync(date);
-            setDragDisplayDates(prev => prev ? { ...prev, end: date } : null);
-          }}
-          onStartDateChange={(date) => {
-            if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setStartDateSync(date);
-            setDragDisplayDates(prev => prev ? { ...prev, start: date } : null);
-          }}
-        />
 
         {/* Zoom controls */}
         <View style={styles.zoomRow}>
@@ -2400,28 +2480,6 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </View>
         </View>
 
-        {/* Add Task + Add Milestone row */}
-        <View style={styles.addRow}>
-          <TouchableOpacity
-            style={[styles.addTaskBtn, { borderLeftColor: currentTaskColor }]}
-            onPress={handleAddTask}
-          >
-            <View style={[styles.taskColorDot, { backgroundColor: currentTaskColor }]} />
-            <Text style={styles.addTaskText}>+ Task</Text>
-            <Text style={styles.addTaskSub}>
-              {tasksRef.current.length === 0 ? `${duration} ${unit}` : isPro ? `${duration} ${unit}` : '🔒'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.addMilestoneBtn}
-            onPress={() => requirePro(() => {
-            setMilestoneModalVisible(true);
-          })}
-          >
-            <View style={styles.milestoneDiamond} />
-            <Text style={styles.addMilestoneText}>{isPro ? '+ Milestone' : '🔒 Milestone'}</Text>
-          </TouchableOpacity>
-        </View>
 
         {/* Unit Selector Modal */}
         <Modal visible={unitModalVisible} transparent={true} animationType="fade" onRequestClose={() => setUnitModalVisible(false)}>
@@ -2682,15 +2740,26 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </Text>
 
 
-          <TouchableOpacity
-            style={[styles.ganttBtn, { borderColor: theme.border }]}
-            onPress={() => requirePro(() => setGanttVisible(true))}
-          >
-            <Text style={styles.ganttBtnIcon}>📊</Text>
-            <Text style={[styles.ganttBtnText, { color: theme.muted }]}>
-              View Gantt Chart{!isPro ? ' 🔒' : ''}
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.viewBtnRow}>
+            <TouchableOpacity
+              style={[styles.ganttBtn, { borderColor: theme.border, flex: 1 }]}
+              onPress={() => requirePro(() => setGanttVisible(true))}
+            >
+              <Text style={styles.ganttBtnIcon}>📊</Text>
+              <Text style={[styles.ganttBtnText, { color: theme.muted }]}>
+                Gantt{!isPro ? ' 🔒' : ''}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ganttBtn, { borderColor: theme.border, flex: 1 }]}
+              onPress={() => requirePro(() => setCalendarVisible(true))}
+            >
+              <Text style={styles.ganttBtnIcon}>📅</Text>
+              <Text style={[styles.ganttBtnText, { color: theme.muted }]}>
+                Calendar{!isPro ? ' 🔒' : ''}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           {!isPro && (
             <TouchableOpacity
@@ -2797,6 +2866,21 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         duration={duration}
         unit={unit}
         currentTaskColor={currentTaskColor}
+      />
+      <CalendarView
+        visible={calendarVisible}
+        onClose={() => {
+          setCalendarVisible(false);
+          Animated.timing(wheelFade, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+        }}
+        tasks={tasks}
+        milestones={milestones}
+        startDate={startDate}
+        endDate={endDate}
+        currentTaskName={currentTaskName}
+        currentTaskColor={currentTaskColor}
+        year={startDate.getFullYear()}
+        theme={theme}
       />
       <ProModal
         visible={proModalVisible}
@@ -2932,10 +3016,10 @@ zoomResetText: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 4,
     borderRadius: 10,
     borderWidth: 0.5,
-    gap: 3,
+    gap: 1,
   },
    taskRight: {
     flexDirection: 'row',
@@ -2952,10 +3036,10 @@ zoomResetText: {
   },
 
   toolbarIcon: {
-  fontSize: 16,
+  fontSize: 14,
 },
   toolbarLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '600',
     letterSpacing: 0.3,
   },
@@ -2971,9 +3055,9 @@ zoomResetText: {
   proBadgeText: { fontSize: 9, fontWeight: "700", color: "#2E9BFF", letterSpacing: 1.5 },
   gearBtn: { padding: 8 },
   gearIcon: { fontSize: 24, color: "#5A7A96" },
-  dateRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
+  dateRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 36 },
   dateField: { flex: 1, borderRadius: 10, flexDirection: "row", alignItems: "center", overflow: "hidden" },
-  dateFieldInner: { flex: 1, alignItems: "center", paddingVertical: 8 },
+  dateFieldInner: { flex: 1, alignItems: "center", paddingVertical: 5 },
   dateStepBtn: { paddingHorizontal: 10, alignSelf: "stretch", justifyContent: "center", alignItems: "center" },
   dateStepText: { fontSize: 18, fontWeight: "300" },
   fieldLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1.2, marginBottom: 2 },
@@ -2983,14 +3067,6 @@ zoomResetText: {
   taskDateField: { flex: 1, flexDirection: "row", alignItems: "center" },
   taskDateLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1, marginBottom: 2 },
   taskDateValue: { fontSize: 13, fontWeight: "600" },
-  addRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
-  addTaskBtn: { flex: 2, backgroundColor: "#1C2B38", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", borderLeftWidth: 4 },
-  taskColorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
-  addTaskText: { fontSize: 15, fontWeight: "600", color: "#FFFFFF", flex: 1 },
-  addTaskSub: { fontSize: 13, color: "#5A7A96" },
-  addMilestoneBtn: { flex: 1, backgroundColor: "#1C2B38", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderLeftWidth: 4, borderLeftColor: "#F0A500" },
-  milestoneDiamond: { width: 10, height: 10, backgroundColor: "#F0A500", transform: [{ rotate: "45deg" }] },
-  addMilestoneText: { fontSize: 13, fontWeight: "600", color: "#FFFFFF" },
   editHint: { fontSize: 14, color: "#5A7A96" },
   taskSection: { width: "100%", marginTop: 16 },
   taskSectionTitle: { fontSize: 11, fontWeight: "600", letterSpacing: 1.5, marginBottom: 10 },
@@ -3011,7 +3087,8 @@ zoomResetText: {
   milestoneDate: { fontSize: 11 },
   milestoneTag: { fontSize: 16, paddingLeft: 8 },
   savesHint: { fontSize: 11, textAlign: "center", marginTop: 8, marginBottom: 8 },
-  ganttBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 12, borderWidth: 1, marginTop: 8 },
+  viewBtnRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  ganttBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 12, borderWidth: 1 },
   ganttBtnIcon: { fontSize: 16 },
   ganttBtnText: { fontSize: 14, fontWeight: "500" },
   upgradeBtn: { width: "100%", backgroundColor: "#1A3A5C", borderRadius: 16, padding: 16, alignItems: "center", marginTop: 12, borderWidth: 1, borderColor: "#2E7DBC" },
@@ -3034,10 +3111,22 @@ zoomResetText: {
   saveOptionSub: { fontSize: 11, color: "#5A7A96" },
   cancelTemplateBtn: { marginHorizontal: 12, marginBottom: 16, padding: 14, alignItems: "center" },
   cancelTemplateBtnText: { fontSize: 14, color: "#5A7A96" },
-  lockRow: { width: '100%', alignItems: 'flex-start', marginBottom: 8, marginTop: -4 },
-  lockToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#2A3F52' },
-  lockToggleActive: { borderColor: '#F0A500', backgroundColor: '#1A1500' },
-  lockToggleIcon: { fontSize: 14 },
+  wheelContainer: { position: 'relative', alignSelf: 'center', width: _SW * 0.9 },
+  cornerBtn: { position: 'absolute', width: C, height: C },
+  cornerTL: { top: 0, left: 0 },
+  cornerTR: { top: 0, right: 0 },
+  cornerBL: { bottom: 0, left: 0 },
+  cornerBR: { bottom: 0, right: 0 },
+  cornerContentTL: { position: 'absolute', top: 10, left: 10, alignItems: 'center', gap: 2 },
+  cornerContentTR: { position: 'absolute', top: 10, right: 10, alignItems: 'center', gap: 2 },
+  cornerContentBL: { position: 'absolute', bottom: 10, left: 10, alignItems: 'center', gap: 2 },
+  cornerContentBR: { position: 'absolute', bottom: 10, right: 10, alignItems: 'center', gap: 2 },
+  cornerLabel: { fontSize: 9, color: '#5A7A96', fontWeight: '600', textAlign: 'center' },
+  cornerDot: { width: 8, height: 8, borderRadius: 4 },
+  cornerDiamond: { width: 8, height: 8, backgroundColor: '#F0A500', transform: [{ rotate: '45deg' }] },
+  cornerLockIcon: { width: 8, height: 9, borderRadius: 2, borderWidth: 1.5, borderColor: '#F0A500', backgroundColor: 'transparent' },
+  cornerCalIcon: { width: 9, height: 9, borderRadius: 2, borderWidth: 1.5, backgroundColor: 'transparent' },
+  // kept for any remaining references
   lockToggleText: { fontSize: 11, color: '#5A7A96', fontWeight: '500' },
   confirmBtn: { marginHorizontal: 12, marginBottom: 8, backgroundColor: '#2E7DBC', borderRadius: 12, padding: 14, alignItems: 'center' },
   confirmBtnText: { fontSize: 15, fontWeight: '600', color: '#FFFFFF' },
