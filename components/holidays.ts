@@ -52,6 +52,34 @@ export function isHoliday(date: Date, country: string): boolean {
   return `${month}-${day}` in holidays;
 }
 
+export function addBusinessDays(start: Date, days: number, country: string): Date {
+  let count = 0;
+  const current = new Date(start);
+  while (count < days) {
+    current.setDate(current.getDate() + 1);
+    const day = current.getDay();
+    if (day !== 0 && day !== 6 && !isHoliday(current, country)) {
+      count++;
+    }
+  }
+  return current;
+}
+export function countHolidaysInRange(start: Date, end: Date, country: string): number {
+  if (!country || country === 'NONE') return 0;
+  const holidays = HOLIDAYS[country];
+  if (!holidays) return 0;
+  let count = 0;
+  const current = new Date(start);
+  current.setDate(current.getDate() + 1); // don't count start date itself
+  while (current <= end) {
+    const month = String(current.getMonth() + 1).padStart(2, '0');
+    const day = String(current.getDate()).padStart(2, '0');
+    if (`${month}-${day}` in holidays) count++;
+    current.setDate(current.getDate() + 1);
+  }
+  return count;
+}
+
 export function businessDaysWithHolidays(
   start: Date,
   end: Date,

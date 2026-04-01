@@ -1,6 +1,6 @@
 import DateWheel, { Milestone, Task, TASK_COLORS } from "@/components/datewheel";
 import GanttChart from "@/components/GanttChart";
-import { businessDaysWithHolidays } from "@/components/holidays";
+import { businessDaysWithHolidays, countHolidaysInRange } from "@/components/holidays";
 import LagEditModal from '@/components/LagEditModal';
 import MilestoneModal from "@/components/MilestoneModal";
 import {
@@ -435,9 +435,45 @@ export default function Index() {
 
 
   async function saveSettings(newSettings: AppSettings) {
-    setSettings(newSettings);
-    await AsyncStorage.setItem("settings", JSON.stringify(newSettings));
+  const oldCountry = settings.holidayCountry;
+  const newCountry = newSettings.holidayCountry;
+  setSettings(newSettings);
+  await AsyncStorage.setItem("settings", JSON.stringify(newSettings));
+
+  if (oldCountry === newCountry) return;
+
+  saveUndoSnapshot();
+
+  // For each task, calculate how many holidays fall in the range
+  // under the old vs new country, and shift end date by the difference
+  const recalculated = tasksRef.current.map(task => {
+    const start = new Date(task.startDate);
+    const end = new Date(task.endDate);
+    const oldHolidays = countHolidaysInRange(start, end, oldCountry);
+    const newHolidays = countHolidaysInRange(start, end, newCountry);
+    const diff = newHolidays - oldHolidays;
+    if (diff === 0) return task;
+    const newEnd = new Date(end);
+    newEnd.setDate(newEnd.getDate() + diff);
+    return { ...task, endDate: newEnd.toISOString() };
+  });
+
+  await saveTasks(recalculated);
+
+  // Recalculate active task
+  const activeOldHolidays = countHolidaysInRange(
+    startDateRef.current, endDateRef.current, oldCountry
+  );
+  const activeNewHolidays = countHolidaysInRange(
+    startDateRef.current, endDateRef.current, newCountry
+  );
+  const activeDiff = activeNewHolidays - activeOldHolidays;
+  if (activeDiff !== 0) {
+    const newActiveEnd = new Date(endDateRef.current);
+    newActiveEnd.setDate(newActiveEnd.getDate() + activeDiff);
+    setEndDateSync(newActiveEnd);
   }
+}
 
   async function loadTasks() {
     try {
