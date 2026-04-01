@@ -288,42 +288,49 @@ export default function Index() {
   isGap: boolean;
   conflictIndex: number;
   lagDays: number;
+  conflictIndex2?: number;
+  lagDays2?: number;
 } {
   const task = updatedTasks[taskIndex];
   const taskEnd = new Date(task.endDate);
   const taskStart = new Date(task.startDate);
 
-  // Check against next stored task
+  let result1: { conflictIndex: number; lagDays: number } | null = null;
+  let result2: { conflictIndex: number; lagDays: number } | null = null;
+
+  // Check against next task
   if (taskIndex < updatedTasks.length - 1) {
     const nextTask = updatedTasks[taskIndex + 1];
-    const nextStart = new Date(nextTask.startDate);
-    const lag = daysBetween(taskEnd, nextStart);
-    if (lag !== 0) {
-      return { hasOverlap: lag < 0, isGap: lag > 0, conflictIndex: taskIndex + 1, lagDays: lag };
-    }
+    const lag = daysBetween(taskEnd, new Date(nextTask.startDate));
+    if (lag !== 0) result1 = { conflictIndex: taskIndex + 1, lagDays: lag };
   }
 
-  // Check against active task if this is the last stored task
+  // Check against active task if last stored task
   if (taskIndex === updatedTasks.length - 1) {
-    const activeStart = startDateRef.current;
-    const lag = daysBetween(taskEnd, activeStart);
-    if (lag !== 0) {
-      // conflictIndex -99 = active task sentinel
-      return { hasOverlap: lag < 0, isGap: lag > 0, conflictIndex: -99, lagDays: lag };
-    }
+    const lag = daysBetween(taskEnd, startDateRef.current);
+    if (lag !== 0) result1 = { conflictIndex: -99, lagDays: lag };
   }
 
   // Check against previous task
   if (taskIndex > 0) {
     const prevTask = updatedTasks[taskIndex - 1];
-    const prevEnd = new Date(prevTask.endDate);
-    const lag = daysBetween(prevEnd, taskStart);
-    if (lag !== 0) {
-      return { hasOverlap: lag < 0, isGap: lag > 0, conflictIndex: taskIndex - 1, lagDays: lag };
-    }
+    const lag = daysBetween(new Date(prevTask.endDate), taskStart);
+    if (lag !== 0) result2 = { conflictIndex: taskIndex - 1, lagDays: lag };
   }
 
-  return { hasOverlap: false, isGap: false, conflictIndex: -1, lagDays: 0 };
+  const primary = result1 ?? result2;
+  const secondary = result1 && result2 ? result2 : undefined;
+
+  if (!primary) return { hasOverlap: false, isGap: false, conflictIndex: -1, lagDays: 0 };
+
+  return {
+    hasOverlap: primary.lagDays < 0 || (secondary?.lagDays ?? 0) < 0,
+    isGap: primary.lagDays > 0 || (secondary?.lagDays ?? 0) > 0,
+    conflictIndex: primary.conflictIndex,
+    lagDays: primary.lagDays,
+    conflictIndex2: secondary?.conflictIndex,
+    lagDays2: secondary?.lagDays,
+  };
 }
 
   function handleUndo() {
@@ -1104,14 +1111,22 @@ if (pickerTask) {
         }
       });
 
-      const { hasOverlap, isGap, conflictIndex, lagDays } = detectOverlapAfterEdit(updated, taskIndex);
+      const { hasOverlap, isGap, conflictIndex, lagDays, conflictIndex2, lagDays2 } = detectOverlapAfterEdit(updated, taskIndex);
 
       if (hasOverlap || isGap) {
         savedTappedTaskIdRef.current = null;
         setPickerVisible(false);
         const conflictTask = conflictIndex === -99
-          ? { name: currentTaskNameRef.current }
-          : updated[conflictIndex];
+  ? { name: currentTaskNameRef.current }
+  : updated[conflictIndex];
+
+const conflictTask2 = conflictIndex2 !== undefined
+  ? (conflictIndex2 === -99 ? { name: currentTaskNameRef.current } : updated[conflictIndex2])
+  : null;
+
+const message = conflictTask2
+  ? `"${pickerTask.name}" overlaps both "${conflictTask.name}" and "${conflictTask2.name}". How would you like to handle this?`
+  : `"${pickerTask.name}" ${lagDays < 0 ? 'overlaps' : 'leaves a gap with'} "${conflictTask.name}" by ${Math.abs(lagDays)} day${Math.abs(lagDays) !== 1 ? 's' : ''}. How would you like to handle this?`;
         const overlapDays = Math.abs(lagDays);
 
         Alert.alert(
@@ -1124,31 +1139,51 @@ onPress: () => {
   saveUndoSnapshot();
   const shifted = [...updated];
 
-  if (conflictIndex === -99) {
-            // Conflict is with the active task — shift it forward
-            const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
-            setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
-            setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
-            setActiveLagDays(undefined); // flush — no lag relationship
-          } else if (conflictIndex > taskIndex) {
-    // Conflict is forward — shift conflicting task and everything after it forward
-    const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
-    for (let i = conflictIndex; i < shifted.length; i++) {
+  // Handle primary conflict
+if (conflictIndex === -99) {
+  const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
+  setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
+  setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
+} else if (conflictIndex > taskIndex) {
+  const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
+  for (let i = conflictIndex; i < shifted.length; i++) {
+    const newStart = new Date(new Date(shifted[i].startDate).getTime() + shiftMs);
+    const newEnd = new Date(new Date(shifted[i].endDate).getTime() + shiftMs);
+    shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
+  }
+  setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
+  setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
+} else {
+  const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
+  for (let i = 0; i <= conflictIndex; i++) {
+    const newStart = new Date(new Date(shifted[i].startDate).getTime() - shiftMs);
+    const newEnd = new Date(new Date(shifted[i].endDate).getTime() - shiftMs);
+    shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
+  }
+}
+
+// Handle secondary conflict if present
+if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
+  if (conflictIndex2 === -99) {
+    const shiftMs = Math.abs(lagDays2) * 24 * 60 * 60 * 1000;
+    setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
+    setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
+  } else if (conflictIndex2 > taskIndex) {
+    const shiftMs = Math.abs(lagDays2) * 24 * 60 * 60 * 1000;
+    for (let i = conflictIndex2; i < shifted.length; i++) {
       const newStart = new Date(new Date(shifted[i].startDate).getTime() + shiftMs);
       const newEnd = new Date(new Date(shifted[i].endDate).getTime() + shiftMs);
       shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
     }
-    setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
-    setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
   } else {
-    // Conflict is backward — shift conflicting task and everything before it backward
-    const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
-    for (let i = 0; i <= conflictIndex; i++) {
+    const shiftMs = Math.abs(lagDays2) * 24 * 60 * 60 * 1000;
+    for (let i = 0; i <= conflictIndex2; i++) {
       const newStart = new Date(new Date(shifted[i].startDate).getTime() - shiftMs);
       const newEnd = new Date(new Date(shifted[i].endDate).getTime() - shiftMs);
       shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
     }
   }
+}
 
   saveTasks(shifted);
 },
