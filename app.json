@@ -2,7 +2,7 @@
   "expo": {
     "name": "Date Wheel",
     "slug": "DateWheel",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "datewheel",
@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0F1923"
+      "ba ckgroundColor": "#0F1923"
     },
     "ios": {
       "supportsTablet": false,
@@ -42,7 +42,7 @@
         "backgroundColor": "#0F1923"
       },
       "package": "com.tbarker80.DateWheel",
-      "versionCode": 10,
+      "versionCode": 11,
       "permissions": ["com.android.vending.BILLING"],
       "intentFilters": [
         {

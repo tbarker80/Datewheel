@@ -134,7 +134,9 @@ export async function saveTemplate(
       }),
     };
     await AsyncStorage.setItem("templates", JSON.stringify([newTemplate, ...existing]));
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Failed to save template:', e);
+  }
 }
 
 export async function saveProject(
@@ -163,7 +165,9 @@ export async function saveProject(
       updatedAt: now,
     };
     await AsyncStorage.setItem("projects", JSON.stringify([newProject, ...existing]));
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Failed to save project:', e);
+  }
 }
 
 export default function TemplatesModal({ visible, onClose, onLoadTemplate, onLoadProject }: Props) {

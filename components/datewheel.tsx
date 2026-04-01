@@ -28,6 +28,14 @@ const MONTHS = [
 
 const TOTAL_DAYS = 365;
 
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function getMonthsForYear(year: number) {
+  return MONTHS.map((m, i) => i === 1 ? { ...m, days: isLeapYear(year) ? 29 : 28 } : m);
+}
+
 export const TASK_COLORS = [
   '#2E9BFF',
   '#1DB8A0',
@@ -88,10 +96,10 @@ function getDayOfYear(date: Date) {
   return Math.floor((date.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function getMonthStartDays() {
+function getMonthStartDays(year: number) {
   const days: number[] = [];
   let running = 0;
-  MONTHS.forEach((m) => { days.push(running); running += m.days; });
+  getMonthsForYear(year).forEach((m) => { days.push(running); running += m.days; });
   return days;
 }
 
@@ -203,9 +211,9 @@ export default function DateWheel({
   onTaskTap,
   onScaleChange,
 }: Props) {
-  const monthStarts = getMonthStartDays();
-  const holidayDays = getHolidayDays(holidayCountry, startDate.getFullYear());
   const year = startDate.getFullYear();
+  const monthStarts = getMonthStartDays(year);
+  const holidayDays = getHolidayDays(holidayCountry, year);
 
   // ─── Derived values ───────────────────────────────────────────────────────
   const startDay = getDayOfYear(startDate);
@@ -256,23 +264,22 @@ export default function DateWheel({
   }, [physicalScale]);
 
   // ViewBox: at scale 1 show full SVG; at higher scales zoom into focus point
-  const vw = SIZE / physicalScale;
-  const vh = SIZE / physicalScale;
-  const vx = physicalScale === 1 ? 0 : focusXY.x - vw / 2 - viewPan.x;
-  const vy = physicalScale === 1 ? 0 : focusXY.y - vh / 2 - viewPan.y;
-  const viewBoxStr = `${vx.toFixed(2)} ${vy.toFixed(2)} ${vw.toFixed(2)} ${vh.toFixed(2)}`;
+  const vSize = SIZE / physicalScale;
+  const vx = physicalScale === 1 ? 0 : focusXY.x - vSize / 2 - viewPan.x;
+  const vy = physicalScale === 1 ? 0 : focusXY.y - vSize / 2 - viewPan.y;
+  const viewBoxStr = `${vx.toFixed(2)} ${vy.toFixed(2)} ${vSize.toFixed(2)} ${vSize.toFixed(2)}`;
 
   // Convert screen touch → SVG coordinate using viewBox mapping
-  // Screen (touchX, touchY) maps to SVG as: svgX = vx + touchX * vw/SIZE
+  // Uses refs to avoid stale closures inside gesture handlers.
   function toSvg(touchX: number, touchY: number): { x: number; y: number } {
     const ps = physicalScaleRef.current;
-    const fw = SIZE / ps;
+    const vs = SIZE / ps;
     const fx = focusXYRef.current;
-    const cx = ps === 1 ? 0 : fx.x - fw / 2 - viewPanRef.current.x;
-    const cy = ps === 1 ? 0 : fx.y - fw / 2 - viewPanRef.current.y;
+    const cx = ps === 1 ? 0 : fx.x - vs / 2 - viewPanRef.current.x;
+    const cy = ps === 1 ? 0 : fx.y - vs / 2 - viewPanRef.current.y;
     return {
-      x: cx + touchX * fw / SIZE,
-      y: cy + touchY * fw / SIZE,
+      x: cx + touchX * vs / SIZE,
+      y: cy + touchY * vs / SIZE,
     };
   }
 
@@ -495,13 +502,16 @@ export default function DateWheel({
 
   // ─── Pinch handlers ───────────────────────────────────────────────────────
 
+  function snapScale(s: number): number {
+    return Math.round(Math.min(4.0, Math.max(1.0, s)) * 2) / 2;
+  }
+
   function handlePinchStart() {
     pinchStartScaleRef.current = physicalScaleRef.current;
   }
 
   function handlePinchUpdate(scale: number) {
-    const newScale = Math.min(4.0, Math.max(1.0, pinchStartScaleRef.current * scale));
-    onScaleChange(Math.round(newScale * 2) / 2); // snap to 0.5 steps
+    onScaleChange(snapScale(pinchStartScaleRef.current * scale));
   }
 
   // ─── Gestures ─────────────────────────────────────────────────────────────
@@ -583,7 +593,7 @@ export default function DateWheel({
           <Circle cx={R} cy={R} r={RING_RADIUS - 18} fill="none" stroke="#2E7DBC" strokeWidth={1} strokeOpacity={0.4}/>
 
           {/* Month labels and dividers */}
-          {MONTHS.map((month, i) => {
+          {getMonthsForYear(year).map((month, i) => {
             const midDay = monthStarts[i] + month.days / 2;
             const angle = dayToAngle(midDay);
             const pos = angleToXY(angle, LABEL_RADIUS);

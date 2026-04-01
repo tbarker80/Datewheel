@@ -33,7 +33,7 @@ export async function scheduleReminder(
   try {
     const reminderDate = new Date(date);
     reminderDate.setDate(reminderDate.getDate() - leadDays);
-    reminderDate = new Date(Date.now() + 30 * 1000);
+    reminderDate.setHours(9, 0, 0, 0);
 
     // Don't schedule if the reminder time has already passed
     if (reminderDate <= new Date()) return null;

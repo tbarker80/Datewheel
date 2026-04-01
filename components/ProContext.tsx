@@ -40,7 +40,9 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
     try {
       const stored = await AsyncStorage.getItem(PRO_STORAGE_KEY);
       if (stored === 'true') setIsPro(true);
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to load Pro status:', e);
+    }
     setIsLoading(false);
   }
 

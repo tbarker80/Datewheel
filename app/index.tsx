@@ -1,6 +1,6 @@
 import DateWheel, { Milestone, Task, TASK_COLORS } from "@/components/datewheel";
 import GanttChart from "@/components/GanttChart";
-import { businessDaysWithHolidays, countHolidaysInRange } from "@/components/holidays";
+import { businessDaysWithHolidays, countHolidaysInRange, isHoliday } from "@/components/holidays";
 import LagEditModal from '@/components/LagEditModal';
 import MilestoneModal from "@/components/MilestoneModal";
 import {
@@ -54,6 +54,30 @@ function monthsBetween(start: Date, end: Date) {
     (end.getFullYear() - start.getFullYear()) * 12 +
     (end.getMonth() - start.getMonth())
   );
+}
+
+function shiftByUnit(date: Date, direction: 1 | -1, unit: string, country: string): Date {
+  const d = new Date(date);
+  switch (unit) {
+    case 'Weeks':
+      d.setDate(d.getDate() + direction * 7);
+      break;
+    case 'Months':
+      d.setMonth(d.getMonth() + direction);
+      break;
+    case 'Business Days': {
+      let count = 0;
+      while (count < 1) {
+        d.setDate(d.getDate() + direction);
+        const dow = d.getDay();
+        if (dow !== 0 && dow !== 6 && !isHoliday(d, country)) count++;
+      }
+      break;
+    }
+    default: // Days
+      d.setDate(d.getDate() + direction);
+  }
+  return d;
 }
 
 function formatDate(date: Date) {
@@ -150,7 +174,9 @@ async function saveProject(
       updatedAt: now,
     };
     await AsyncStorage.setItem("projects", JSON.stringify([newProject, ...existing]));
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Failed to save project:', e);
+  }
 }
 
 export default function Index() {
@@ -333,7 +359,7 @@ export default function Index() {
   };
 }
 
-  function handleUndo() {
+  async function handleUndo() {
     if (undoStack.length === 0) return;
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const [last, ...rest] = undoStack;
@@ -344,15 +370,75 @@ export default function Index() {
     setEndDateSync(new Date(last.endDate));
     setCurrentTaskName(last.currentTaskName);
     currentTaskNameRef.current = last.currentTaskName;
-    AsyncStorage.setItem("tasks", JSON.stringify(last.tasks));
-    AsyncStorage.setItem("milestones", JSON.stringify(last.milestones));
+    await AsyncStorage.setItem("tasks", JSON.stringify(last.tasks));
+    await AsyncStorage.setItem("milestones", JSON.stringify(last.milestones));
+  }
+
+  function handleShiftTimeline(field: 'start' | 'end', direction: 1 | -1) {
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (field === 'end') {
+      const newEnd = shiftByUnit(endDateRef.current, direction, unit, settings.holidayCountry);
+      if (newEnd > startDateRef.current) {
+        saveUndoSnapshot();
+        setEndDateSync(newEnd);
+      }
+      return;
+    }
+    // Timeline start: shift tasks[0] if tasks exist, otherwise shift active start
+    if (tasksRef.current.length > 0) {
+      const first = tasksRef.current[0];
+      const newStart = shiftByUnit(new Date(first.startDate), direction, unit, settings.holidayCountry);
+      if (newStart < new Date(first.endDate)) {
+        saveUndoSnapshot();
+        saveTasks(tasksRef.current.map((t, i) => i === 0 ? { ...t, startDate: newStart.toISOString() } : t));
+      }
+    } else {
+      const newStart = shiftByUnit(startDateRef.current, direction, unit, settings.holidayCountry);
+      if (newStart < endDateRef.current) {
+        saveUndoSnapshot();
+        setStartDateSync(newStart);
+      }
+    }
+  }
+
+  function handleShiftActiveTask(field: 'start' | 'end', direction: 1 | -1) {
+    if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (tappedTask) {
+      const current = field === 'start' ? new Date(tappedTask.startDate) : new Date(tappedTask.endDate);
+      const newDate = shiftByUnit(current, direction, unit, settings.holidayCountry);
+      const valid = field === 'start'
+        ? newDate < new Date(tappedTask.endDate)
+        : newDate > new Date(tappedTask.startDate);
+      if (valid) {
+        saveUndoSnapshot();
+        saveTasks(tasksRef.current.map(t =>
+          t.id !== tappedTask.id ? t : { ...t, [field === 'start' ? 'startDate' : 'endDate']: newDate.toISOString() }
+        ));
+      }
+      return;
+    }
+    if (field === 'start') {
+      const newStart = shiftByUnit(startDateRef.current, direction, unit, settings.holidayCountry);
+      if (newStart < endDateRef.current) {
+        saveUndoSnapshot();
+        setStartDateSync(newStart);
+      }
+    } else {
+      const newEnd = shiftByUnit(endDateRef.current, direction, unit, settings.holidayCountry);
+      if (newEnd > startDateRef.current) {
+        saveUndoSnapshot();
+        setEndDateSync(newEnd);
+      }
+    }
   }
 
   async function loadSettings() {
     try {
       const stored = await AsyncStorage.getItem("settings");
       if (stored) setSettings(JSON.parse(stored));
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to load settings:', e);
+    }
   }
 
   function handleLagConfirm(lagDays: number) {
@@ -423,14 +509,18 @@ export default function Index() {
       if (!seen) {
         setOnboardingVisible(true);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to check onboarding status:', e);
+    }
   }
 
   async function handleOnboardingDone() {
     setOnboardingVisible(false);
     try {
       await AsyncStorage.setItem('onboarding_seen', 'true');
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to save onboarding status:', e);
+    }
   }
 
 
@@ -501,7 +591,9 @@ export default function Index() {
           milestonesRef.current = parsed;
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to load milestones:', e);
+    }
   }
 
   async function requestReviewIfAppropriate(taskCount: number) {
@@ -512,7 +604,9 @@ export default function Index() {
           await StoreReview.requestReview();
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to request review:', e);
+    }
   }
 
   function setTasksSync(newTasks: Task[]) {
@@ -1542,6 +1636,122 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     }
   }
 
+  async function handleExportICS() {
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    function icsDate(date: Date): string {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}${m}${d}`;
+    }
+
+    function icsTimestamp(date: Date): string {
+      return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    }
+
+    function icsEscape(text: string): string {
+      return text
+        .replace(/\\/g, '\\\\')
+        .replace(/;/g, '\\;')
+        .replace(/,/g, '\\,')
+        .replace(/\n/g, '\\n');
+    }
+
+    function buildAlarm(reminderDays: number): string {
+      return [
+        'BEGIN:VALARM',
+        'ACTION:DISPLAY',
+        'DESCRIPTION:Reminder',
+        `TRIGGER:-P${reminderDays}D`,
+        'END:VALARM',
+      ].join('\r\n');
+    }
+
+    const now = new Date();
+    const allTasks = [
+      ...tasksRef.current,
+      {
+        id: -1,
+        name: currentTaskNameRef.current,
+        startDate: startDateRef.current.toISOString(),
+        endDate: endDateRef.current.toISOString(),
+        color: currentTaskColor,
+        duration,
+        unit,
+        reminderDays: undefined as number | undefined,
+        notificationId: undefined as string | undefined,
+      },
+    ];
+
+    const lines: string[] = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//DateWheel//DateWheel//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+    ];
+
+    allTasks.forEach((task) => {
+      const start = new Date(task.startDate);
+      const end = new Date(task.endDate);
+      const endExclusive = new Date(end);
+      endExclusive.setDate(endExclusive.getDate() + 1);
+
+      const isActive = task.id === -1;
+      const durationLabel = isActive ? `${duration} ${unit}` : `${task.duration} ${task.unit}`;
+
+      lines.push('BEGIN:VEVENT');
+      lines.push(`UID:task-${task.id}-${now.getTime()}@datewheel`);
+      lines.push(`DTSTAMP:${icsTimestamp(now)}`);
+      lines.push(`DTSTART;VALUE=DATE:${icsDate(start)}`);
+      lines.push(`DTEND;VALUE=DATE:${icsDate(endExclusive)}`);
+      lines.push(`SUMMARY:${icsEscape(task.name)}${isActive ? ' (Active)' : ''}`);
+      lines.push(`DESCRIPTION:${icsEscape(durationLabel)}`);
+      lines.push('CATEGORIES:DateWheel Task');
+      if (task.reminderDays) lines.push(buildAlarm(task.reminderDays));
+      lines.push('END:VEVENT');
+    });
+
+    milestonesRef.current.forEach((milestone) => {
+      const date = new Date(milestone.date);
+      const endExclusive = new Date(date);
+      endExclusive.setDate(endExclusive.getDate() + 1);
+
+      lines.push('BEGIN:VEVENT');
+      lines.push(`UID:milestone-${milestone.id}-${now.getTime()}@datewheel`);
+      lines.push(`DTSTAMP:${icsTimestamp(now)}`);
+      lines.push(`DTSTART;VALUE=DATE:${icsDate(date)}`);
+      lines.push(`DTEND;VALUE=DATE:${icsDate(endExclusive)}`);
+      lines.push(`SUMMARY:\u272A ${icsEscape(milestone.name)}`);
+      lines.push('DESCRIPTION:Milestone');
+      lines.push('CATEGORIES:DateWheel Milestone');
+      if (milestone.reminderDays) lines.push(buildAlarm(milestone.reminderDays));
+      lines.push('END:VEVENT');
+    });
+
+    lines.push('END:VCALENDAR');
+
+    const icsContent = lines.join('\r\n');
+
+    try {
+      const fileName = `DateWheel_${new Date().toLocaleDateString('en-US', {
+        month: '2-digit', day: '2-digit', year: 'numeric',
+      }).replace(/\//g, '-')}.ics`;
+      const filePath = `${FileSystem.cacheDirectory}${fileName}`;
+      await FileSystem.writeAsStringAsync(filePath, icsContent, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      await Sharing.shareAsync(filePath, {
+        mimeType: 'text/calendar',
+        dialogTitle: 'Export Date Wheel as iCal',
+        UTI: 'public.calendar-event',
+      });
+    } catch (e) {
+      Alert.alert('Export failed', 'Could not generate the iCal file. Please try again.');
+    }
+  }
+
   async function handleExportPDF() {
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const allTasks = [
@@ -1761,22 +1971,32 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
 
         {/* Timeline dates */}
         <View style={styles.dateRow}>
-          <TouchableOpacity
-            style={[styles.dateField, { backgroundColor: theme.card }]}
-            onPress={() => openPicker("start")}
-          >
-            <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE START</Text>
-            <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineStart)}</Text>
-            <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineStart)}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.dateField, { backgroundColor: theme.card }]}
-            onPress={() => openPicker("end")}
-          >
-            <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE END</Text>
-            <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineEnd)}</Text>
-            <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineEnd)}</Text>
-          </TouchableOpacity>
+          <View style={[styles.dateField, { backgroundColor: theme.card }]}>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', -1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("start")}>
+              <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE START</Text>
+              <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineStart)}</Text>
+              <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineStart)}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', 1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.dateField, { backgroundColor: theme.card }]}>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', -1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end")}>
+              <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE END</Text>
+              <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineEnd)}</Text>
+              <Text style={[styles.fieldDay, { color: theme.muted }]}>{getDayName(timelineEnd)}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', 1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Lock toggle */}
@@ -1857,60 +2077,56 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         />
 
         {/* Zoom controls */}
-{wheelScale === 1.0 ? (
-  <View style={styles.zoomRow}>
-    <TouchableOpacity
-      style={[styles.zoomBtn, { opacity: 0.3 }]}
-      disabled
-    >
-      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>−</Text>
-    </TouchableOpacity>
-    <Text style={[styles.zoomLabel, { color: theme.border }]}>1×</Text>
-    <TouchableOpacity
-      style={styles.zoomBtn}
-      onPress={() => setWheelScale(1.5)}
-    >
-      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>+</Text>
-    </TouchableOpacity>
-  </View>
-) : (
-  <View style={styles.zoomRow}>
-    <TouchableOpacity
-      style={[styles.zoomBtn, { opacity: wheelScale <= 1.0 ? 0.3 : 1 }]}
-      onPress={() => setWheelScale(s => Math.max(1.0, Math.round((s - 0.5) * 2) / 2))}
-      disabled={wheelScale <= 1.0}
-    >
-      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>−</Text>
-    </TouchableOpacity>
-    <TouchableOpacity
-      style={styles.zoomResetBtn}
-      onPress={() => setWheelScale(1.0)}
-    >
-      <Text style={[styles.zoomResetText, { color: theme.accent }]}>↺ Reset View</Text>
-    </TouchableOpacity>
-    <TouchableOpacity
-      style={[styles.zoomBtn, { opacity: wheelScale >= 4.0 ? 0.3 : 1 }]}
-      onPress={() => setWheelScale(s => Math.min(4.0, Math.round((s + 0.5) * 2) / 2))}
-      disabled={wheelScale >= 4.0}
-    >
-      <Text style={[styles.zoomBtnText, { color: theme.muted }]}>+</Text>
-    </TouchableOpacity>
-  </View>
-)}
+        <View style={styles.zoomRow}>
+          <TouchableOpacity
+            style={[styles.zoomBtn, { opacity: wheelScale <= 1.0 ? 0.3 : 1 }]}
+            onPress={() => setWheelScale(s => Math.max(1.0, Math.round((s - 0.5) * 2) / 2))}
+            disabled={wheelScale <= 1.0}
+          >
+            <Text style={[styles.zoomBtnText, { color: theme.muted }]}>−</Text>
+          </TouchableOpacity>
+          {wheelScale === 1.0 ? (
+            <Text style={[styles.zoomLabel, { color: theme.border }]}>1×</Text>
+          ) : (
+            <TouchableOpacity style={styles.zoomResetBtn} onPress={() => setWheelScale(1.0)}>
+              <Text style={[styles.zoomResetText, { color: theme.accent }]}>↺ Reset View</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.zoomBtn, { opacity: wheelScale >= 4.0 ? 0.3 : 1 }]}
+            onPress={() => setWheelScale(s => Math.min(4.0, Math.round((s + 0.5) * 2) / 2))}
+            disabled={wheelScale >= 4.0}
+          >
+            <Text style={[styles.zoomBtnText, { color: theme.muted }]}>+</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Active task dates */}
         <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
-          <TouchableOpacity style={styles.taskDateField} onPress={() => openPicker("start")}>
-            <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} START</Text>
-            <Text style={[styles.taskDateValue, { color: theme.text }]}>{formatDate(activeTaskStart)}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.taskDateField, { borderLeftWidth: 0.5, borderLeftColor: theme.border }]}
-            onPress={() => openPicker("end")}
-          >
-            <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} END</Text>
-            <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>{formatDate(activeTaskEnd)}</Text>
-          </TouchableOpacity>
+          <View style={styles.taskDateField}>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('start', -1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("start")}>
+              <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} START</Text>
+              <Text style={[styles.taskDateValue, { color: theme.text }]}>{formatDate(activeTaskStart)}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('start', 1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.taskDateField, { borderLeftWidth: 0.5, borderLeftColor: theme.border }]}>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('end', -1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end")}>
+              <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} END</Text>
+              <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>{formatDate(activeTaskEnd)}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('end', 1)}>
+              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Add Task + Add Milestone row */}
@@ -1995,7 +2211,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         {/* Save Modal */}
         <Modal visible={saveVisible} transparent={true} animationType="fade" onRequestClose={() => setSaveVisible(false)}>
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSaveVisible(false)}>
-            <View style={styles.modalBox}>
+            <View style={[styles.modalBox, { maxHeight: '85%' }]}>
               <Text style={styles.modalTitle}>SAVE & EXPORT</Text>
               <View style={styles.templateInputWrapper}>
                 <TextInput
@@ -2008,49 +2224,57 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   maxLength={40}
                 />
               </View>
-              <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsProject}>
-                <Text style={styles.saveOptionIcon}>📁</Text>
-                <View style={styles.saveOptionText}>
-                  <Text style={styles.saveOptionTitle}>Save as Project</Text>
-                  <Text style={styles.saveOptionSub}>Saves actual dates — open and continue later</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsTemplate}>
-                <Text style={styles.saveOptionIcon}>📋</Text>
-                <View style={styles.saveOptionText}>
-                  <Text style={styles.saveOptionTitle}>Save as Template</Text>
-                  <Text style={styles.saveOptionSub}>Saves structure only — reuse for new projects</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportCSV(); }}>
-                <Text style={styles.saveOptionIcon}>📤</Text>
-                <View style={styles.saveOptionText}>
-                  <Text style={styles.saveOptionTitle}>Export as CSV</Text>
-                  <Text style={styles.saveOptionSub}>Share with Excel, Sheets, MS Project & more</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportXLSX(); }}>
-                <Text style={styles.saveOptionIcon}>📊</Text>
-                <View style={styles.saveOptionText}>
-                  <Text style={styles.saveOptionTitle}>Export as Excel</Text>
-                  <Text style={styles.saveOptionSub}>Color-coded tasks with Gantt sheet</Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportPDF(); }}>
-                <Text style={styles.saveOptionIcon}>📄</Text>
-                <View style={styles.saveOptionText}>
-                  <Text style={styles.saveOptionTitle}>Export as PDF</Text>
-                  <Text style={styles.saveOptionSub}>Professional report with task summary</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.saveOptionBtn, { marginBottom: 8 }]} onPress={() => { setSaveVisible(false); handleShareProject(); }}>
-                <Text style={styles.saveOptionIcon}>🔗</Text>
-                <View style={styles.saveOptionText}>
-                  <Text style={styles.saveOptionTitle}>Share Project File</Text>
-                  <Text style={styles.saveOptionSub}>Send to another Date Wheel user to import</Text>
-                </View>
-              </TouchableOpacity>
+              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsProject}>
+                  <Text style={styles.saveOptionIcon}>📁</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Save as Project</Text>
+                    <Text style={styles.saveOptionSub}>Saves actual dates — open and continue later</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsTemplate}>
+                  <Text style={styles.saveOptionIcon}>📋</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Save as Template</Text>
+                    <Text style={styles.saveOptionSub}>Saves structure only — reuse for new projects</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportCSV(); }}>
+                  <Text style={styles.saveOptionIcon}>📤</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Export as CSV</Text>
+                    <Text style={styles.saveOptionSub}>Share with Excel, Sheets, MS Project & more</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportXLSX(); }}>
+                  <Text style={styles.saveOptionIcon}>📊</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Export as Excel</Text>
+                    <Text style={styles.saveOptionSub}>Color-coded tasks with Gantt sheet</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportICS(); }}>
+                  <Text style={styles.saveOptionIcon}>📅</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Export as iCal</Text>
+                    <Text style={styles.saveOptionSub}>Import into Google Calendar, Outlook & more</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportPDF(); }}>
+                  <Text style={styles.saveOptionIcon}>📄</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Export as PDF</Text>
+                    <Text style={styles.saveOptionSub}>Professional report with task summary</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.saveOptionBtn, { marginBottom: 8 }]} onPress={() => { setSaveVisible(false); handleShareProject(); }}>
+                  <Text style={styles.saveOptionIcon}>🔗</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Share Project File</Text>
+                    <Text style={styles.saveOptionSub}>Send to another Date Wheel user to import</Text>
+                  </View>
+                </TouchableOpacity>
+              </ScrollView>
               <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveVisible(false); }}>
                 <Text style={styles.cancelTemplateBtnText}>Cancel</Text>
               </TouchableOpacity>
@@ -2222,14 +2446,14 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             ? new Date(milestonesRef.current.find(m => m.id === editingMilestoneId)?.date || new Date())
             : new Date()
           }
-          onConfirm={(d) => {
+          onConfirm={async (d) => {
             if (editingMilestoneId !== null) {
               saveUndoSnapshot();
               const updated = milestonesRef.current.map(m =>
                 m.id === editingMilestoneId ? { ...m, date: d.toISOString() } : m
               );
               setMilestonesSync(updated);
-              AsyncStorage.setItem("milestones", JSON.stringify(updated));
+              await AsyncStorage.setItem("milestones", JSON.stringify(updated));
             }
             setMilestoneDatePickerVisible(false);
             setEditingMilestoneId(null);
@@ -2325,14 +2549,14 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           ? new Date(milestonesRef.current.find(m => m.id === editingMilestoneId)?.date || new Date())
           : new Date()
         }
-        onConfirm={(d) => {
+        onConfirm={async (d) => {
           if (editingMilestoneId !== null) {
             saveUndoSnapshot();
             const updated = milestonesRef.current.map(m =>
               m.id === editingMilestoneId ? { ...m, date: d.toISOString() } : m
             );
             setMilestonesSync(updated);
-            AsyncStorage.setItem("milestones", JSON.stringify(updated));
+            await AsyncStorage.setItem("milestones", JSON.stringify(updated));
           }
           setMilestoneDatePickerVisible(false);
           setEditingMilestoneId(null);
@@ -2475,12 +2699,15 @@ zoomResetText: {
   gearBtn: { padding: 8 },
   gearIcon: { fontSize: 24, color: "#5A7A96" },
   dateRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
-  dateField: { flex: 1, borderRadius: 10, padding: 8, alignItems: "center" },
+  dateField: { flex: 1, borderRadius: 10, flexDirection: "row", alignItems: "center", overflow: "hidden" },
+  dateFieldInner: { flex: 1, alignItems: "center", paddingVertical: 8 },
+  dateStepBtn: { paddingHorizontal: 10, alignSelf: "stretch", justifyContent: "center", alignItems: "center" },
+  dateStepText: { fontSize: 18, fontWeight: "300" },
   fieldLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1.2, marginBottom: 2 },
   fieldValue: { fontSize: 12, fontWeight: "600" },
   fieldDay: { fontSize: 10, marginTop: 1 },
   taskDateRow: { flexDirection: "row", width: "100%", borderRadius: 12, marginBottom: 8, overflow: "hidden" },
-  taskDateField: { flex: 1, padding: 10, alignItems: "center" },
+  taskDateField: { flex: 1, flexDirection: "row", alignItems: "center" },
   taskDateLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1, marginBottom: 2 },
   taskDateValue: { fontSize: 13, fontWeight: "600" },
   addRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 8 },
