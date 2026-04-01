@@ -190,6 +190,8 @@ export default function Index() {
   const [startDate, setStartDate] = useState(today);
   const [lagEditVisible, setLagEditVisible] = useState(false);
   const [lagEditTaskIndex, setLagEditTaskIndex] = useState<number>(-1);
+  const [lagEditInitialOverride, setLagEditInitialOverride] = useState<number | undefined>(undefined);
+  const [stepModes, setStepModes] = useState<Record<string, 'shift' | 'free'>>({});
   const [wheelScale, setWheelScale] = useState(1.0);
   const [endDate, setEndDate] = useState(future);
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -239,6 +241,7 @@ export default function Index() {
   const milestonesRef = useRef<Milestone[]>([]);
   const currentTaskNameRef = useRef<string>("Current Task");
   const savedTappedTaskIdRef = useRef<number | null>(null);
+  const stepLagCallbackRef = useRef<((lagDays: number) => void) | null>(null);
 
   const duration = calcDuration(startDate, endDate, unit, settings.holidayCountry);
   const totalDuration = calcTotalDuration(tasks, endDate, unit, settings.holidayCountry);
@@ -376,6 +379,23 @@ export default function Index() {
 
   function handleShiftTimeline(field: 'start' | 'end', direction: 1 | -1) {
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    if (isLocked) {
+      // Shift entire project (all tasks + active task) together
+      const anchor = field === 'start' ? startDateRef.current : endDateRef.current;
+      const newAnchor = shiftByUnit(anchor, direction, unit, settings.holidayCountry);
+      const deltaMs = newAnchor.getTime() - anchor.getTime();
+      saveUndoSnapshot();
+      saveTasks(tasksRef.current.map(t => ({
+        ...t,
+        startDate: new Date(new Date(t.startDate).getTime() + deltaMs).toISOString(),
+        endDate: new Date(new Date(t.endDate).getTime() + deltaMs).toISOString(),
+      })));
+      setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
+      setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+      return;
+    }
+
     if (field === 'end') {
       const newEnd = shiftByUnit(endDateRef.current, direction, unit, settings.holidayCountry);
       if (newEnd > startDateRef.current) {
@@ -401,28 +421,255 @@ export default function Index() {
     }
   }
 
+  function applyStepCascade(fromIndex: number, toIndex: number, deltaMs: number, taskList: Task[]): Task[] {
+    const result = [...taskList];
+    const lo = Math.min(fromIndex, toIndex);
+    const hi = Math.max(fromIndex, toIndex);
+    for (let i = lo; i <= hi; i++) {
+      if (i < 0 || i >= result.length) continue;
+      if (result[i].lagDays !== undefined) continue;
+      const s = new Date(new Date(result[i].startDate).getTime() + deltaMs);
+      const e = new Date(new Date(result[i].endDate).getTime() + deltaMs);
+      result[i] = { ...result[i], startDate: s.toISOString(), endDate: e.toISOString() };
+    }
+    return result;
+  }
+
+  function showStepOverlapAlert(params: {
+    key: string;
+    lagDays: number;
+    taskName: string;
+    adjacentName: string;
+    lagOwnerIndex: number;
+    onShift: () => void;
+    onFree: () => void;
+  }) {
+    const { key, lagDays, taskName, adjacentName, onShift, onFree } = params;
+    const isOverlap = lagDays < 0;
+    const absD = Math.abs(lagDays);
+    Alert.alert(
+      isOverlap ? 'Task Overlap Detected' : 'Task Gap Detected',
+      `"${taskName}" and "${adjacentName}" would have ${isOverlap ? 'an overlap' : 'a gap'} of ${absD} day${absD !== 1 ? 's' : ''}. What would you like to do?`,
+      [
+        {
+          text: 'Shift Tasks',
+          onPress: () => {
+            setStepModes(prev => ({ ...prev, [key]: 'shift' }));
+            onShift();
+          },
+        },
+        {
+          text: 'Keep Overlap/Gap',
+          onPress: () => {
+            setStepModes(prev => ({ ...prev, [key]: 'free' }));
+            onFree();
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  }
+
   function handleShiftActiveTask(field: 'start' | 'end', direction: 1 | -1) {
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     if (tappedTask) {
+      const idx = tasksRef.current.findIndex(t => t.id === tappedTask.id);
+      if (idx === -1) return;
+
       const current = field === 'start' ? new Date(tappedTask.startDate) : new Date(tappedTask.endDate);
       const newDate = shiftByUnit(current, direction, unit, settings.holidayCountry);
+      const deltaMs = newDate.getTime() - current.getTime();
+
       const valid = field === 'start'
         ? newDate < new Date(tappedTask.endDate)
         : newDate > new Date(tappedTask.startDate);
-      if (valid) {
+      if (!valid) return;
+
+      const stepKey = `${tappedTask.id}-${field}`;
+      const existingMode = stepModes[stepKey];
+
+      const updatedTasks = tasksRef.current.map(t =>
+        t.id !== tappedTask.id ? t : { ...t, [field === 'start' ? 'startDate' : 'endDate']: newDate.toISOString() }
+      );
+
+      if (existingMode === 'shift') {
         saveUndoSnapshot();
-        saveTasks(tasksRef.current.map(t =>
-          t.id !== tappedTask.id ? t : { ...t, [field === 'start' ? 'startDate' : 'endDate']: newDate.toISOString() }
-        ));
+        if (field === 'end') {
+          saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks));
+          if (idx === tasksRef.current.length - 1 && activeLagDays === undefined) {
+            setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
+            setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+          }
+        } else {
+          saveTasks(applyStepCascade(0, idx - 1, deltaMs, updatedTasks));
+        }
+        return;
       }
+
+      if (existingMode === 'free') {
+        saveUndoSnapshot();
+        saveTasks(updatedTasks);
+        return;
+      }
+
+      // First move: check for overlap/gap with adjacent task
+      if (field === 'end') {
+        const nextTask = tasksRef.current[idx + 1];
+        if (nextTask && nextTask.lagDays === undefined) {
+          const lagDays = Math.round((new Date(nextTask.startDate).getTime() - newDate.getTime()) / 86400000);
+          if (lagDays !== 0) {
+            showStepOverlapAlert({
+              key: stepKey,
+              lagDays,
+              taskName: tappedTask.name,
+              adjacentName: nextTask.name,
+              lagOwnerIndex: idx + 1,
+              onShift: () => {
+                saveUndoSnapshot();
+                saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks));
+              },
+              onFree: () => {
+                stepLagCallbackRef.current = (confirmedLag: number) => {
+                  saveUndoSnapshot();
+                  const withLag = updatedTasks.map((t, i) =>
+                    i === idx + 1 ? { ...t, lagDays: confirmedLag === 0 ? undefined : confirmedLag } : t
+                  );
+                  saveTasks(withLag);
+                  stepLagCallbackRef.current = null;
+                };
+                setLagEditInitialOverride(lagDays);
+                setLagEditTaskIndex(idx + 1);
+                setLagEditVisible(true);
+              },
+            });
+            return;
+          }
+        } else if (!nextTask && activeLagDays === undefined) {
+          // Last stored task: check against active task start
+          const lagDays = Math.round((startDateRef.current.getTime() - newDate.getTime()) / 86400000);
+          if (lagDays !== 0) {
+            showStepOverlapAlert({
+              key: stepKey,
+              lagDays,
+              taskName: tappedTask.name,
+              adjacentName: currentTaskNameRef.current,
+              lagOwnerIndex: -99,
+              onShift: () => {
+                saveUndoSnapshot();
+                saveTasks(updatedTasks);
+                setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
+                setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+              },
+              onFree: () => {
+                stepLagCallbackRef.current = (confirmedLag: number) => {
+                  saveUndoSnapshot();
+                  const newActiveStart = new Date(newDate.getTime() + confirmedLag * 86400000);
+                  const activeDurationMs = endDateRef.current.getTime() - startDateRef.current.getTime();
+                  saveTasks(updatedTasks);
+                  setStartDateSync(newActiveStart);
+                  setEndDateSync(new Date(newActiveStart.getTime() + activeDurationMs));
+                  setActiveLagDays(confirmedLag === 0 ? undefined : confirmedLag);
+                  stepLagCallbackRef.current = null;
+                };
+                setLagEditInitialOverride(lagDays);
+                setLagEditTaskIndex(-99);
+                setLagEditVisible(true);
+              },
+            });
+            return;
+          }
+        }
+      } else {
+        const prevTask = idx > 0 ? tasksRef.current[idx - 1] : null;
+        if (prevTask && tasksRef.current[idx].lagDays === undefined) {
+          const lagDays = Math.round((newDate.getTime() - new Date(prevTask.endDate).getTime()) / 86400000);
+          if (lagDays !== 0) {
+            showStepOverlapAlert({
+              key: stepKey,
+              lagDays,
+              taskName: tappedTask.name,
+              adjacentName: prevTask.name,
+              lagOwnerIndex: idx,
+              onShift: () => {
+                saveUndoSnapshot();
+                saveTasks(applyStepCascade(0, idx - 1, deltaMs, updatedTasks));
+              },
+              onFree: () => {
+                stepLagCallbackRef.current = (confirmedLag: number) => {
+                  saveUndoSnapshot();
+                  const withLag = updatedTasks.map((t, i) =>
+                    i === idx ? { ...t, lagDays: confirmedLag === 0 ? undefined : confirmedLag } : t
+                  );
+                  saveTasks(withLag);
+                  stepLagCallbackRef.current = null;
+                };
+                setLagEditInitialOverride(lagDays);
+                setLagEditTaskIndex(idx);
+                setLagEditVisible(true);
+              },
+            });
+            return;
+          }
+        }
+      }
+
+      // No adjacent conflict — just move
+      saveUndoSnapshot();
+      saveTasks(updatedTasks);
       return;
     }
+
+    // No tapped task: move active project start/end
     if (field === 'start') {
       const newStart = shiftByUnit(startDateRef.current, direction, unit, settings.holidayCountry);
-      if (newStart < endDateRef.current) {
+      if (newStart >= endDateRef.current) return;
+      const deltaMs = newStart.getTime() - startDateRef.current.getTime();
+      const lastTask = tasksRef.current.length > 0 ? tasksRef.current[tasksRef.current.length - 1] : null;
+      const stepKey = 'active-start';
+      const existingMode = stepModes[stepKey];
+
+      if (existingMode === 'shift') {
         saveUndoSnapshot();
+        saveTasks(applyStepCascade(0, tasksRef.current.length - 1, deltaMs, tasksRef.current));
         setStartDateSync(newStart);
+        setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+        return;
       }
+
+      if (!existingMode && lastTask && activeLagDays === undefined) {
+        const lagDays = Math.round((newStart.getTime() - new Date(lastTask.endDate).getTime()) / 86400000);
+        if (lagDays !== 0) {
+          showStepOverlapAlert({
+            key: stepKey,
+            lagDays,
+            taskName: currentTaskNameRef.current,
+            adjacentName: lastTask.name,
+            lagOwnerIndex: -99,
+            onShift: () => {
+              saveUndoSnapshot();
+              saveTasks(applyStepCascade(0, tasksRef.current.length - 1, deltaMs, tasksRef.current));
+              setStartDateSync(newStart);
+              setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+            },
+            onFree: () => {
+              stepLagCallbackRef.current = (confirmedLag: number) => {
+                saveUndoSnapshot();
+                setActiveLagDays(confirmedLag === 0 ? undefined : confirmedLag);
+                setStartDateSync(newStart);
+                stepLagCallbackRef.current = null;
+              };
+              setLagEditInitialOverride(lagDays);
+              setLagEditTaskIndex(-99);
+              setLagEditVisible(true);
+            },
+          });
+          return;
+        }
+      }
+
+      saveUndoSnapshot();
+      setStartDateSync(newStart);
     } else {
       const newEnd = shiftByUnit(endDateRef.current, direction, unit, settings.holidayCountry);
       if (newEnd > startDateRef.current) {
@@ -442,6 +689,14 @@ export default function Index() {
   }
 
   function handleLagConfirm(lagDays: number) {
+    if (stepLagCallbackRef.current) {
+      stepLagCallbackRef.current(lagDays);
+      setLagEditVisible(false);
+      setLagEditTaskIndex(-1);
+      setLagEditInitialOverride(undefined);
+      return;
+    }
+
     saveUndoSnapshot();
 
     if (lagEditTaskIndex === -99) {
@@ -1364,6 +1619,22 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     }
 
     // ── Editing the active task ──────────────────────────────────────────────
+    // If timeline is locked, shift everything together
+    if (isLocked) {
+      const anchor = pickingField === "start" ? startDateRef.current : endDateRef.current;
+      const deltaMs = date.getTime() - anchor.getTime();
+      saveUndoSnapshot();
+      saveTasks(tasksRef.current.map(t => ({
+        ...t,
+        startDate: new Date(new Date(t.startDate).getTime() + deltaMs).toISOString(),
+        endDate: new Date(new Date(t.endDate).getTime() + deltaMs).toISOString(),
+      })));
+      setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
+      setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+      setPickerVisible(false);
+      return;
+    }
+
     saveUndoSnapshot();
     if (pickingField === "start") {
       if (tasksRef.current.length > 0) {
@@ -2490,15 +2761,17 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           : '')
   }
   initialLagDays={
-    lagEditTaskIndex === -99
-      ? activeLagDays ?? 0
-      : (lagEditTaskIndex >= 0 && lagEditTaskIndex < tasksRef.current.length
-          ? tasksRef.current[lagEditTaskIndex]?.lagDays ?? 0
-          : 0)
+    lagEditInitialOverride !== undefined
+      ? lagEditInitialOverride
+      : lagEditTaskIndex === -99
+        ? activeLagDays ?? 0
+        : (lagEditTaskIndex >= 0 && lagEditTaskIndex < tasksRef.current.length
+            ? tasksRef.current[lagEditTaskIndex]?.lagDays ?? 0
+            : 0)
   }
   onConfirm={handleLagConfirm}
   onClear={handleLagClear}
-  onCancel={() => { setLagEditVisible(false); setLagEditTaskIndex(-1); }}
+  onCancel={() => { setLagEditVisible(false); setLagEditTaskIndex(-1); setLagEditInitialOverride(undefined); stepLagCallbackRef.current = null; }}
 />
       <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 1} onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
       <TaskNameModal

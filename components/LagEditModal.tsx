@@ -86,6 +86,12 @@ export default function LagEditModal({
           {/* Day input */}
           <View style={styles.inputRow}>
             <Text style={styles.signLabel}>{sign}</Text>
+            <TouchableOpacity
+              style={styles.stepBtn}
+              onPress={() => setDays(d => String(Math.max(0, (parseInt(d) || 0) - 1)))}
+            >
+              <Text style={styles.stepBtnText}>−</Text>
+            </TouchableOpacity>
             <TextInput
               style={styles.input}
               value={days}
@@ -95,6 +101,12 @@ export default function LagEditModal({
               autoFocus
               selectTextOnFocus
             />
+            <TouchableOpacity
+              style={styles.stepBtn}
+              onPress={() => setDays(d => String((parseInt(d) || 0) + 1))}
+            >
+              <Text style={styles.stepBtnText}>+</Text>
+            </TouchableOpacity>
             <Text style={styles.daysLabel}>days</Text>
           </View>
 
@@ -234,6 +246,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#5A7A96',
     fontWeight: '500',
+  },
+  stepBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#0F1923',
+    borderWidth: 1,
+    borderColor: '#2A3F52',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBtnText: {
+    fontSize: 22,
+    fontWeight: '300',
+    color: '#8AAFC4',
+    lineHeight: 26,
   },
   preview: {
     fontSize: 12,
