@@ -147,6 +147,7 @@ function buildArcPath(startDay: number, endDay: number, sameYear: boolean): stri
 interface Props {
   startDate: Date;
   endDate: Date;
+  activeLagDays?: number;  // lag between last stored task and active task
   duration: string;
   unit: string;
   tasks: Task[];
@@ -180,6 +181,7 @@ export default function DateWheel({
   duration,
   unit,
   tasks,
+  activeLagDays,
   milestones,
   totalDuration,
   holidayCountry,
@@ -282,6 +284,7 @@ export default function DateWheel({
   const pinchStartScaleRef = React.useRef(1);
   const panStartTouchRef = React.useRef({ x: 0, y: 0 });
   const panStartPanRef = React.useRef({ x: 0, y: 0 });
+  const angleToDayRef = React.useRef<number | null>(null);
   const [activeDot, setActiveDot] = React.useState<'start' | 'end' | number | null>(null);
 
   function dist(ax: number, ay: number, bx: number, by: number) {
@@ -403,7 +406,13 @@ export default function DateWheel({
 
     let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
     if (angle < 0) angle += 360;
-    const dayOfYear = Math.round((angle / 360) * TOTAL_DAYS);
+    // Dampen drag speed when zoomed — higher scale = more precision needed
+    const dampening = physicalScale > 1 ? physicalScale * 1.5 : 1;
+    const rawDay = (angle / 360) * TOTAL_DAYS;
+    const prevDay = angleToDayRef.current ?? rawDay;
+    angleToDayRef.current = prevDay + (rawDay - prevDay) / dampening;
+    const dayOfYear = Math.round(angleToDayRef.current);
+
 
     if (isLocked) {
       const shiftDays = dayOfYear - lockDragStartDayRef.current;
@@ -442,6 +451,7 @@ export default function DateWheel({
   function handleDragEnd() {
     isDraggingRef.current = false;
     isPanningViewRef.current = false;
+    angleToDayRef.current = null;
     setActiveDot(null);
     onDragActive(false);
     onDragEnd();
@@ -657,41 +667,47 @@ export default function DateWheel({
           {/* Center hub */}
           <Circle cx={R} cy={R} r={R - 80} fill="#0F1923" stroke="#2E7DBC" strokeWidth={1.5}/>
 
-          {/* Boundary dots */}
-          {tasks.map((task, i) => {
-  const tEndDay = getDayOfYear(new Date(task.endDate));
-  const tEndXY = angleToXY(dayToAngle(tEndDay), RING_RADIUS);
-  const isActive = activeDot === i;
-  const nextTask = tasks[i + 1];
-  const hasLag = nextTask?.lagDays !== undefined && nextTask.lagDays !== 0;
-  const isOverlapLag = hasLag && nextTask!.lagDays! < 0;
+            {/* Boundary dots */}
+            {tasks.map((task, i) => {
+              const tEndDay = getDayOfYear(new Date(task.endDate));
+              const tEndXY = angleToXY(dayToAngle(tEndDay), RING_RADIUS);
+              const isActive = activeDot === i;
+              const nextTask = i < tasks.length - 1 ? tasks[i + 1] : undefined;
+            const isLastTask = i === tasks.length - 1;
+            const hasLag = (nextTask !== undefined && nextTask.lagDays !== undefined && nextTask.lagDays !== 0) ||
+                (isLastTask && activeLagDays !== undefined && activeLagDays !== 0);
 
-  return (
-    <React.Fragment key={task.id}>
-      {isActive && <Circle cx={tEndXY.x} cy={tEndXY.y} r={20} fill={task.color} fillOpacity={0.2}/>}
-      <Circle cx={tEndXY.x} cy={tEndXY.y} r={isActive ? 13 : 8}
-        fill={task.color} stroke="#FFFFFF"
-        strokeWidth={isActive ? 2.5 : 1.5}
-        strokeOpacity={isActive ? 0.9 : 0.4}/>
-      {task.reminderDays && !isActive && (
-        <Circle cx={tEndXY.x} cy={tEndXY.y} r={13}
-          fill="none" stroke="#FFFFFF" strokeWidth={1}
-          strokeOpacity={0.5} strokeDasharray="2 2"/>
-      )}
-      {/* Lag/overlap indicator ring */}
-      {hasLag && !isActive && (
-        <Circle
-          cx={tEndXY.x} cy={tEndXY.y}
-          r={16}
-          fill="none"
-          stroke={isOverlapLag ? '#EF4444' : '#F0A500'}
-          strokeWidth={1.5}
-          strokeOpacity={0.8}
-        />
-      )}
-    </React.Fragment>
-  );
-})}
+    const isOverlapLag = hasLag && (
+  (nextTask !== undefined && nextTask.lagDays !== undefined && nextTask.lagDays < 0) ||
+  (isLastTask && activeLagDays !== undefined && activeLagDays < 0)
+);
+
+    return (
+      <React.Fragment key={task.id}>
+        {isActive && <Circle cx={tEndXY.x} cy={tEndXY.y} r={20} fill={task.color} fillOpacity={0.2}/>}
+        <Circle cx={tEndXY.x} cy={tEndXY.y} r={isActive ? 13 : 8}
+          fill={task.color} stroke="#FFFFFF"
+          strokeWidth={isActive ? 2.5 : 1.5}
+          strokeOpacity={isActive ? 0.9 : 0.4}/>
+        {task.reminderDays && !isActive && (
+          <Circle cx={tEndXY.x} cy={tEndXY.y} r={13}
+            fill="none" stroke="#FFFFFF" strokeWidth={1}
+            strokeOpacity={0.5} strokeDasharray="2 2"/>
+        )}
+        {/* Lag/overlap indicator ring */}
+        {hasLag && !isActive && (
+          <Circle
+            cx={tEndXY.x} cy={tEndXY.y}
+            r={16}
+            fill="none"
+            stroke={isOverlapLag ? '#EF4444' : '#F0A500'}
+            strokeWidth={1.5}
+            strokeOpacity={0.8}
+          />
+        )}
+      </React.Fragment>
+    );
+  })}
 
           {/* Milestone diamonds */}
           {milestones.map((milestone) => {

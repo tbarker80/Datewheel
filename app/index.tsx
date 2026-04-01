@@ -182,6 +182,7 @@ export default function Index() {
   const [proModalVisible, setProModalVisible] = useState(false);
   const [milestoneModalVisible, setMilestoneModalVisible] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [activeLagDays, setActiveLagDays] = useState<number | undefined>(undefined);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -292,13 +293,23 @@ export default function Index() {
   const taskEnd = new Date(task.endDate);
   const taskStart = new Date(task.startDate);
 
-  // Check against next task
+  // Check against next stored task
   if (taskIndex < updatedTasks.length - 1) {
     const nextTask = updatedTasks[taskIndex + 1];
     const nextStart = new Date(nextTask.startDate);
     const lag = daysBetween(taskEnd, nextStart);
     if (lag !== 0) {
       return { hasOverlap: lag < 0, isGap: lag > 0, conflictIndex: taskIndex + 1, lagDays: lag };
+    }
+  }
+
+  // Check against active task if this is the last stored task
+  if (taskIndex === updatedTasks.length - 1) {
+    const activeStart = startDateRef.current;
+    const lag = daysBetween(taskEnd, activeStart);
+    if (lag !== 0) {
+      // conflictIndex -99 = active task sentinel
+      return { hasOverlap: lag < 0, isGap: lag > 0, conflictIndex: -99, lagDays: lag };
     }
   }
 
@@ -314,8 +325,6 @@ export default function Index() {
 
   return { hasOverlap: false, isGap: false, conflictIndex: -1, lagDays: 0 };
 }
-
-
 
   function handleUndo() {
     if (undoStack.length === 0) return;
@@ -340,8 +349,24 @@ export default function Index() {
   }
 
   function handleLagConfirm(lagDays: number) {
-    if (lagEditTaskIndex < 0 || lagEditTaskIndex >= tasksRef.current.length) return;
     saveUndoSnapshot();
+
+    if (lagEditTaskIndex === -99) {
+      // Editing lag between last stored task and active task
+      const lastTask = tasksRef.current[tasksRef.current.length - 1];
+      if (!lastTask) return;
+      const prevEnd = new Date(lastTask.endDate);
+      const newActiveStart = new Date(prevEnd.getTime() + lagDays * 24 * 60 * 60 * 1000);
+      const activeDurationMs = endDateRef.current.getTime() - startDateRef.current.getTime();
+      setStartDateSync(newActiveStart);
+      setEndDateSync(new Date(newActiveStart.getTime() + activeDurationMs));
+      setActiveLagDays(lagDays === 0 ? undefined : lagDays);
+      setLagEditVisible(false);
+      setLagEditTaskIndex(-1);
+      return;
+    }
+
+    if (lagEditTaskIndex < 0 || lagEditTaskIndex >= tasksRef.current.length) return;
 
     const updated = tasksRef.current.map((t, i) => {
       if (i === lagEditTaskIndex) return { ...t, lagDays: lagDays === 0 ? undefined : lagDays };
@@ -362,16 +387,16 @@ export default function Index() {
         lagDays: lagDays === 0 ? undefined : lagDays,
       };
 
-      // Cascade: shift all subsequent tasks by the same delta
+      // Cascade subsequent tasks
       const delta = newStart.getTime() - new Date(tasksRef.current[lagEditTaskIndex].startDate).getTime();
       for (let i = lagEditTaskIndex + 1; i < updated.length; i++) {
-        if (updated[i].lagDays !== undefined) continue; // preserve other lag relationships
+        if (updated[i].lagDays !== undefined) continue;
         const s = new Date(new Date(updated[i].startDate).getTime() + delta);
         const e = new Date(new Date(updated[i].endDate).getTime() + delta);
         updated[i] = { ...updated[i], startDate: s.toISOString(), endDate: e.toISOString() };
       }
 
-      // Shift active task by same delta
+      // Shift active task
       setStartDateSync(new Date(startDateRef.current.getTime() + delta));
       setEndDateSync(new Date(endDateRef.current.getTime() + delta));
     }
@@ -382,7 +407,7 @@ export default function Index() {
   }
 
   function handleLagClear() {
-    handleLagConfirm(0); // 0 = flush, removes lagDays
+    handleLagConfirm(0);
   }
 
   async function checkOnboarding() {
@@ -777,6 +802,7 @@ export default function Index() {
         duration,
         unit,
         isActive: true,
+        lagDays: activeLagDays,
       },
     ];
 
@@ -1052,21 +1078,25 @@ export default function Index() {
   }
 
   function openPicker(field: string) {
-    setPickingField(field);
-    setPickerVisible(true);
-  }
+  savedTappedTaskIdRef.current = tappedTaskId;  // ← ADD THIS
+  setPickingField(field);
+  setPickerVisible(true);
+}
 
   function handleConfirm(date: Date) {
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     // ── Editing a stored (tapped) task ──────────────────────────────────────
-    if (tappedTask) {
-      const taskIndex = tasksRef.current.findIndex(t => t.id === tappedTaskId);
+    const pickerTaskId = savedTappedTaskIdRef.current;
+const pickerTask = pickerTaskId !== null ? tasksRef.current.find(t => t.id === pickerTaskId) : null;
+
+if (pickerTask) {
+  const taskIndex = tasksRef.current.findIndex(t => t.id === pickerTaskId);
       if (taskIndex === -1) { setPickerVisible(false); return; }
 
       // Build updated task array with new date applied
       const updated = tasksRef.current.map(t => {
-        if (t.id !== tappedTaskId) return t;
+        if (t.id !== pickerTaskId) return t;
         if (pickingField === "start") {
           return { ...t, startDate: date.toISOString(), duration: String(daysBetween(date, new Date(t.endDate))) };
         } else {
@@ -1077,55 +1107,79 @@ export default function Index() {
       const { hasOverlap, isGap, conflictIndex, lagDays } = detectOverlapAfterEdit(updated, taskIndex);
 
       if (hasOverlap || isGap) {
+        savedTappedTaskIdRef.current = null;
         setPickerVisible(false);
-        const conflictTask = updated[conflictIndex];
+        const conflictTask = conflictIndex === -99
+          ? { name: currentTaskNameRef.current }
+          : updated[conflictIndex];
         const overlapDays = Math.abs(lagDays);
 
         Alert.alert(
           '⚠️ Task Overlap',
-          `"${tappedTask.name}" ${lagDays < 0 ? 'overlaps' : 'leaves a gap with'} "${conflictTask.name}" by ${Math.abs(lagDays)} day${Math.abs(lagDays) !== 1 ? 's' : ''}. How would you like to handle this?`,
+          `"${pickerTask.name}" ${lagDays < 0 ? 'overlaps' : 'leaves a gap with'} "${conflictTask.name}" by ${Math.abs(lagDays)} day${Math.abs(lagDays) !== 1 ? 's' : ''}. How would you like to handle this?`,
           [
             {
               text: 'Shift Tasks',
-              onPress: () => {
-                saveUndoSnapshot();
-                const shifted = [...updated];
+onPress: () => {
+  saveUndoSnapshot();
+  const shifted = [...updated];
 
-                if (conflictIndex > taskIndex) {
-                  // Conflict is forward — shift conflicting task and everything after it forward
-                  const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
-                  for (let i = conflictIndex; i < shifted.length; i++) {
-                    const newStart = new Date(new Date(shifted[i].startDate).getTime() + shiftMs);
-                    const newEnd = new Date(new Date(shifted[i].endDate).getTime() + shiftMs);
-                    shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
-                  }
-                  setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
-                  setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
-                } else {
-                  // Conflict is backward — shift conflicting task and everything before it backward
-                  const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
-                  for (let i = 0; i <= conflictIndex; i++) {
-                    const newStart = new Date(new Date(shifted[i].startDate).getTime() - shiftMs);
-                    const newEnd = new Date(new Date(shifted[i].endDate).getTime() - shiftMs);
-                    shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
-                  }
-                  // Active task doesn't need to shift in backward case
-                }
+  if (conflictIndex === -99) {
+            // Conflict is with the active task — shift it forward
+            const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
+            setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
+            setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
+            setActiveLagDays(undefined); // flush — no lag relationship
+          } else if (conflictIndex > taskIndex) {
+    // Conflict is forward — shift conflicting task and everything after it forward
+    const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
+    for (let i = conflictIndex; i < shifted.length; i++) {
+      const newStart = new Date(new Date(shifted[i].startDate).getTime() + shiftMs);
+      const newEnd = new Date(new Date(shifted[i].endDate).getTime() + shiftMs);
+      shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
+    }
+    setStartDateSync(new Date(startDateRef.current.getTime() + shiftMs));
+    setEndDateSync(new Date(endDateRef.current.getTime() + shiftMs));
+  } else {
+    // Conflict is backward — shift conflicting task and everything before it backward
+    const shiftMs = Math.abs(lagDays) * 24 * 60 * 60 * 1000;
+    for (let i = 0; i <= conflictIndex; i++) {
+      const newStart = new Date(new Date(shifted[i].startDate).getTime() - shiftMs);
+      const newEnd = new Date(new Date(shifted[i].endDate).getTime() - shiftMs);
+      shifted[i] = { ...shifted[i], startDate: newStart.toISOString(), endDate: newEnd.toISOString(), lagDays: undefined };
+    }
+  }
 
-                saveTasks(shifted);
-              },
+  saveTasks(shifted);
+},
             },
             {
-              text: 'Allow Overlap/Gap',
+              text: lagDays < 0 ? 'Allow Overlap' : 'Keep Gap',
               onPress: () => {
                 saveUndoSnapshot();
-                const withLag = updated.map((t, i) => {
-                  if (i === Math.max(taskIndex, conflictIndex)) {
-                    return { ...t, lagDays };
-                  }
-                  return t;
-                });
-                saveTasks(withLag);
+                if (conflictIndex === -99) {
+                  // Overlap is with the active task — store on active task state
+                  // and shift active task start to maintain the lag
+                  const newActiveStart = new Date(
+                    new Date(updated[taskIndex].endDate).getTime() + lagDays * 24 * 60 * 60 * 1000
+                  );
+                  const activeDurationMs = endDateRef.current.getTime() - startDateRef.current.getTime();
+                  setStartDateSync(newActiveStart);
+                  setEndDateSync(new Date(newActiveStart.getTime() + activeDurationMs));
+                  setActiveLagDays(lagDays);
+                  saveTasks(updated);
+                } else {
+                  const withLag = updated.map((t, i) => {
+                    // lagDays always goes on the LATER task (higher index)
+                    // which is the one whose start date is shifted
+                    const laterIndex = conflictIndex > taskIndex ? conflictIndex : taskIndex;
+                    if (i === laterIndex) {
+                      return { ...t, lagDays };
+                    }
+                    return t;
+                  });
+                  saveTasks(withLag);
+                }
               },
             },
             {
@@ -1162,8 +1216,10 @@ export default function Index() {
               {
                 text: 'Shift Tasks',
                 onPress: () => {
+                  
                   shiftTasksToNewStart(date);
                   setStartDateSync(date);
+                  
                 },
               },
               {
@@ -1690,14 +1746,20 @@ export default function Index() {
           onDragActive={handleDragActive}
           onTaskTap={handleTaskTap}
           isLocked={isLocked}
+          activeLagDays={activeLagDays}
           onTimelineShift={handleTimelineShift}
           onBoundaryTap={(taskIndex) => {
-            // Only open lag edit if the tapped boundary has a lag relationship
-            // OR if a task is highlighted (user wants to set one)
-            const task = tasksRef.current[taskIndex + 1];
-            if (task && (task.lagDays !== undefined || tappedTaskId !== null)) {
-              setLagEditTaskIndex(taskIndex + 1);
+            const isLastStoredTask = taskIndex === tasksRef.current.length - 1;
+            if (isLastStoredTask && activeLagDays !== undefined) {
+              // Boundary between last stored task and active task
+              setLagEditTaskIndex(-99); // sentinel for active task
               setLagEditVisible(true);
+            } else {
+              const task = tasksRef.current[taskIndex + 1];
+              if (task && (task.lagDays !== undefined || tappedTaskId !== null)) {
+                setLagEditTaskIndex(taskIndex + 1);
+                setLagEditVisible(true);
+              }
             }
           }}
           onDurationTap={() => {
@@ -2117,20 +2179,32 @@ export default function Index() {
         onShowOnboarding={() => { setSettingsVisible(false); setOnboardingVisible(true); }}
       />
       <LagEditModal
-        visible={lagEditVisible}
-        taskName={lagEditTaskIndex >= 0 && lagEditTaskIndex < tasksRef.current.length
-          ? tasksRef.current[lagEditTaskIndex].name
-          : ''}
-        prevTaskName={lagEditTaskIndex > 0 && lagEditTaskIndex <= tasksRef.current.length
+  visible={lagEditVisible}
+  taskName={
+    lagEditTaskIndex === -99
+      ? currentTaskNameRef.current
+      : (lagEditTaskIndex >= 0 && lagEditTaskIndex < tasksRef.current.length
+          ? tasksRef.current[lagEditTaskIndex]?.name ?? ''
+          : '')
+  }
+  prevTaskName={
+    lagEditTaskIndex === -99
+      ? tasksRef.current[tasksRef.current.length - 1]?.name ?? ''
+      : (lagEditTaskIndex > 0
           ? tasksRef.current[lagEditTaskIndex - 1]?.name ?? ''
-          : ''}
-        initialLagDays={lagEditTaskIndex >= 0 && lagEditTaskIndex < tasksRef.current.length
-          ? tasksRef.current[lagEditTaskIndex].lagDays ?? 0
-          : 0}
-        onConfirm={handleLagConfirm}
-        onClear={handleLagClear}
-        onCancel={() => { setLagEditVisible(false); setLagEditTaskIndex(-1); }}
-      />
+          : '')
+  }
+  initialLagDays={
+    lagEditTaskIndex === -99
+      ? activeLagDays ?? 0
+      : (lagEditTaskIndex >= 0 && lagEditTaskIndex < tasksRef.current.length
+          ? tasksRef.current[lagEditTaskIndex]?.lagDays ?? 0
+          : 0)
+  }
+  onConfirm={handleLagConfirm}
+  onClear={handleLagClear}
+  onCancel={() => { setLagEditVisible(false); setLagEditTaskIndex(-1); }}
+/>
       <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 1} onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
       <TaskNameModal
         visible={renameModalVisible}
