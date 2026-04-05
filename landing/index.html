@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DateWheel</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:   #2E9BFF;
+      --teal:   #1DB8A0;
+      --purple: #8B5CF6;
+      --orange: #F97316;
+      --pink:   #EC4899;
+      --green:  #84CC16;
+      --bg:     #F7F6F3;
+      --card:   #FFFFFF;
+      --text:   #1A1A1A;
+      --soft:   #6B6B6B;
+      --line:   #E5E3DE;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.6;
+    }
+
+    /* ── NAV ── */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--line);
+      background: var(--bg);
+    }
+
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+      color: var(--text);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .logo-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--blue), var(--teal));
+    }
+
+    .nav-btn {
+      background: var(--text);
+      color: #fff;
+      border: none;
+      padding: 10px 22px;
+      border-radius: 24px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 100px 32px 80px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 7vw, 64px);
+      font-weight: 800;
+      letter-spacing: -2px;
+      line-height: 1.1;
+      margin-bottom: 22px;
+    }
+
+    .hero p {
+      font-size: 19px;
+      color: var(--soft);
+      margin-bottom: 40px;
+      line-height: 1.65;
+    }
+
+    .hero-btns {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-dark {
+      background: var(--text);
+      color: #fff;
+      padding: 14px 30px;
+      border-radius: 28px;
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity .2s;
+    }
+    .btn-dark:hover { opacity: .8; }
+
+    .btn-light {
+      background: var(--card);
+      color: var(--text);
+      padding: 14px 30px;
+      border-radius: 28px;
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: none;
+      border: 1px solid var(--line);
+      transition: border-color .2s;
+    }
+    .btn-light:hover { border-color: #bbb; }
+
+    /* ── WHEEL ── */
+    .wheel-wrap {
+      display: flex;
+      justify-content: center;
+      padding: 60px 32px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: var(--card);
+    }
+
+    .wheel-wrap svg {
+      width: min(340px, 85vw);
+      height: min(340px, 85vw);
+      filter: drop-shadow(0 8px 40px rgba(0,0,0,0.08));
+    }
+
+    /* ── SECTION ── */
+    .section {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 80px 32px;
+    }
+
+    .section h2 {
+      font-size: clamp(26px, 5vw, 42px);
+      font-weight: 800;
+      letter-spacing: -1px;
+      line-height: 1.15;
+      margin-bottom: 14px;
+    }
+
+    .section p {
+      font-size: 17px;
+      color: var(--soft);
+      line-height: 1.7;
+      max-width: 540px;
+    }
+
+    /* ── FEATURE LIST ── */
+    .features {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 32px 100px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .feat {
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+      padding: 32px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .feat:first-child { border-top: 1px solid var(--line); }
+
+    .feat-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .feat-body h3 {
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .feat-body p {
+      font-size: 15px;
+      color: var(--soft);
+      line-height: 1.65;
+    }
+
+    /* ── VIEWS STRIP ── */
+    .views-strip {
+      background: var(--card);
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 60px 32px;
+    }
+
+    .views-inner {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .views-inner h2 {
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 800;
+      letter-spacing: -1px;
+      margin-bottom: 8px;
+    }
+
+    .views-inner p {
+      font-size: 16px;
+      color: var(--soft);
+      margin-bottom: 36px;
+    }
+
+    .view-pills {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .view-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 10px 18px;
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    .pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* ── BOTTOM CTA ── */
+    .cta {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 100px 32px;
+      text-align: center;
+    }
+
+    .cta h2 {
+      font-size: clamp(30px, 6vw, 52px);
+      font-weight: 800;
+      letter-spacing: -1.5px;
+      line-height: 1.1;
+      margin-bottom: 16px;
+    }
+
+    .cta p {
+      font-size: 18px;
+      color: var(--soft);
+      margin-bottom: 40px;
+    }
+
+    .store-row {
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .store-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--text);
+      color: #fff;
+      border-radius: 14px;
+      padding: 14px 24px;
+      text-decoration: none;
+      transition: opacity .2s;
+    }
+    .store-btn:hover { opacity: .82; }
+
+    .store-btn-icon { font-size: 24px; line-height: 1; }
+    .store-btn-sub { font-size: 10px; opacity: .7; }
+    .store-btn-name { font-size: 16px; font-weight: 700; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 28px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 13px;
+      color: #aaa;
+    }
+
+    footer a { color: #aaa; text-decoration: none; }
+    footer a:hover { color: var(--text); }
+
+    @media (max-width: 600px) {
+      nav { padding: 16px 20px; }
+      .hero { padding: 70px 20px 60px; }
+      .section, .features { padding-left: 20px; padding-right: 20px; }
+      .cta { padding-left: 20px; padding-right: 20px; }
+      footer { padding: 24px 20px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="logo" href="#">
+    <div class="logo-dot"></div>
+    DateWheel
+  </a>
+  <a class="nav-btn" href="#download">Download</a>
+</nav>
+
+<!-- ── HERO ── -->
+<div class="hero">
+  <h1>Your project, spinning in plain sight.</h1>
+  <p>DateWheel is a simple way to see your whole project schedule at once — no spreadsheets, no fuss. Just a wheel that shows you where you are and what's coming next.</p>
+  <div class="hero-btns">
+    <a class="btn-dark" href="#download">Get the app — it's free</a>
+    <a class="btn-light" href="#how">See how it works</a>
+  </div>
+</div>
+
+<!-- ── WHEEL ── -->
+<div class="wheel-wrap">
+  <svg viewBox="0 0 340 340" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="170" cy="170" r="165" fill="#fff" stroke="#E5E3DE" stroke-width="1"/>
+
+    <!-- task slices -->
+    <path d="M170 170 L170 8 A162 162 0 0 1 308 89 Z"    fill="#2E9BFF" opacity="0.88"/>
+    <path d="M170 170 L308 89 A162 162 0 0 1 308 251 Z"  fill="#1DB8A0" opacity="0.88"/>
+    <path d="M170 170 L308 251 A162 162 0 0 1 170 332 Z" fill="#8B5CF6" opacity="0.88"/>
+    <path d="M170 170 L170 332 A162 162 0 0 1 32 251 Z"  fill="#F97316" opacity="0.88"/>
+    <path d="M170 170 L32 251 A162 162 0 0 1 32 89 Z"    fill="#EC4899" opacity="0.88"/>
+    <path d="M170 170 L32 89 A162 162 0 0 1 170 8 Z"     fill="#84CC16" opacity="0.88"/>
+
+    <!-- dividers -->
+    <line x1="170" y1="170" x2="170" y2="8"   stroke="#fff" stroke-width="2"/>
+    <line x1="170" y1="170" x2="308" y2="89"  stroke="#fff" stroke-width="2"/>
+    <line x1="170" y1="170" x2="308" y2="251" stroke="#fff" stroke-width="2"/>
+    <line x1="170" y1="170" x2="170" y2="332" stroke="#fff" stroke-width="2"/>
+    <line x1="170" y1="170" x2="32"  y2="251" stroke="#fff" stroke-width="2"/>
+    <line x1="170" y1="170" x2="32"  y2="89"  stroke="#fff" stroke-width="2"/>
+
+    <!-- labels at inner ring (r≈115 from center) -->
+    <text x="228" y="74"  text-anchor="middle" fill="#fff" font-size="11" font-family="-apple-system,sans-serif" font-weight="600">Discovery</text>
+    <text x="285" y="174" text-anchor="middle" fill="#fff" font-size="11" font-family="-apple-system,sans-serif" font-weight="600">Design</text>
+    <text x="228" y="274" text-anchor="middle" fill="#fff" font-size="11" font-family="-apple-system,sans-serif" font-weight="600">Build</text>
+    <text x="113" y="274" text-anchor="middle" fill="#fff" font-size="11" font-family="-apple-system,sans-serif" font-weight="600">QA</text>
+    <text x="56"  y="174" text-anchor="middle" fill="#fff" font-size="11" font-family="-apple-system,sans-serif" font-weight="600">Launch</text>
+    <text x="113" y="74"  text-anchor="middle" fill="#fff" font-size="11" font-family="-apple-system,sans-serif" font-weight="600">Review</text>
+
+    <!-- inner hub -->
+    <circle cx="170" cy="170" r="80" fill="#fff" stroke="#E5E3DE" stroke-width="1"/>
+    <text x="170" y="164" text-anchor="middle" fill="#1A1A1A" font-size="13" font-family="-apple-system,sans-serif" font-weight="700">Q2 Project</text>
+    <text x="170" y="182" text-anchor="middle" fill="#aaa" font-size="11" font-family="-apple-system,sans-serif">Apr – Jun 2026</text>
+
+    <!-- handles at outer rim -->
+    <circle cx="170" cy="8"   r="5" fill="#fff" stroke="#ccc" stroke-width="1.5"/>
+    <circle cx="308" cy="89"  r="5" fill="#fff" stroke="#ccc" stroke-width="1.5"/>
+    <circle cx="308" cy="251" r="5" fill="#fff" stroke="#ccc" stroke-width="1.5"/>
+    <circle cx="170" cy="332" r="5" fill="#fff" stroke="#ccc" stroke-width="1.5"/>
+    <circle cx="32"  cy="251" r="5" fill="#fff" stroke="#ccc" stroke-width="1.5"/>
+    <circle cx="32"  cy="89"  r="5" fill="#fff" stroke="#ccc" stroke-width="1.5"/>
+
+    <!-- milestone diamond (outer rim, top spoke) -->
+    <polygon points="170,1 175,8 170,15 165,8" fill="#F0A500"/>
+  </svg>
+</div>
+
+<!-- ── HOW IT WORKS ── -->
+<div class="section" id="how">
+  <h2>Built for people, not project managers.</h2>
+  <p>
+    Most planning apps were designed for teams with dedicated PMs and hours to spare.
+    DateWheel was built for the rest of us — the freelancer juggling three clients,
+    the small team trying to ship something, the person who just needs to know
+    if they're on track.
+  </p>
+</div>
+
+<!-- ── FEATURES ── -->
+<div class="features">
+
+  <div class="feat">
+    <div class="feat-icon" style="background:#EEF6FF;">🎡</div>
+    <div class="feat-body">
+      <h3>The wheel makes sense instantly</h3>
+      <p>Add your tasks and they fill the circle. A bigger slice means more time. It's the kind of thing you understand in two seconds, not two weeks of training.</p>
+    </div>
+  </div>
+
+  <div class="feat">
+    <div class="feat-icon" style="background:#EFFCF9;">📅</div>
+    <div class="feat-body">
+      <h3>Three ways to look at your schedule</h3>
+      <p>Wheel, calendar, Gantt chart. Switch between them with one tap. Same project, different lens — pick whichever one helps you right now.</p>
+    </div>
+  </div>
+
+  <div class="feat">
+    <div class="feat-icon" style="background:#F3F0FF;">🔒</div>
+    <div class="feat-body">
+      <h3>Move one date, everything else follows</h3>
+      <p>Lock the timeline and slide any task — the rest shift automatically. No more manually nudging every single date because the kickoff moved by a week.</p>
+    </div>
+  </div>
+
+  <div class="feat">
+    <div class="feat-icon" style="background:#FFF5EE;">🔔</div>
+    <div class="feat-body">
+      <h3>Reminders that actually remind you</h3>
+      <p>Set a heads-up on any task — 3 days before, a week before, whatever you need. The app pings you so you don't have to keep the date in your head.</p>
+    </div>
+  </div>
+
+  <div class="feat">
+    <div class="feat-icon" style="background:#FEF0F7;">◆</div>
+    <div class="feat-body">
+      <h3>Milestones for the moments that matter</h3>
+      <p>Drop a milestone on any date — a launch, a review, a deadline. It shows up on the wheel and across every view so you never lose sight of what the whole thing is building toward.</p>
+    </div>
+  </div>
+
+  <div class="feat">
+    <div class="feat-icon" style="background:#F3FAEC;">📤</div>
+    <div class="feat-body">
+      <h3>Share it however you want</h3>
+      <p>Export to PDF, Excel, or a calendar file your whole team can open. It plays nicely with everything else you're already using.</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── VIEWS ── -->
+<div class="views-strip" id="views">
+  <div class="views-inner">
+    <h2>One project. Three views.</h2>
+    <p>Switch between them any time. They're always in sync.</p>
+    <div class="view-pills">
+      <div class="view-pill">
+        <div class="pill-dot" style="background:#2E9BFF;"></div>
+        Wheel — see the big picture
+      </div>
+      <div class="view-pill">
+        <div class="pill-dot" style="background:#8B5CF6;"></div>
+        Gantt — zoom in on the detail
+      </div>
+      <div class="view-pill">
+        <div class="pill-dot" style="background:#1DB8A0;"></div>
+        Calendar — see it month by month
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── BOTTOM CTA ── -->
+<div class="cta" id="download">
+  <h2>Give it a spin.</h2>
+  <p>Free to download. No account required. Just open it and start planning.</p>
+  <div class="store-row">
+    <a class="store-btn" href="#">
+      <span class="store-btn-icon"></span>
+      <div>
+        <div class="store-btn-sub">Download on the</div>
+        <div class="store-btn-name">App Store</div>
+      </div>
+    </a>
+    <a class="store-btn" href="#">
+      <span class="store-btn-icon">▶</span>
+      <div>
+        <div class="store-btn-sub">Get it on</div>
+        <div class="store-btn-name">Google Play</div>
+      </div>
+    </a>
+  </div>
+</div>
+
+<footer>
+  <span>© 2026 DateWheel</span>
+  <div style="display:flex;gap:20px;">
+    <a href="#">Privacy</a>
+    <a href="#">Terms</a>
+    <a href="#">Support</a>
+  </div>
+</footer>
+
+</body>
+</html>

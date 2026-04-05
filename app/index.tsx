@@ -96,18 +96,25 @@ function getDayName(date: Date) {
 
 const UNITS = ["Days", "Weeks", "Months", "Business Days"];
 const MILESTONE_COLORS = ['#F0A500', '#EC4899', '#84CC16', '#2E9BFF', '#8B5CF6'];
-const MAX_UNDO_LEVELS = 5;
+const MAX_UNDO_LEVELS = 25;
 
 // Corner button geometry
 const _SW = Dimensions.get('window').width;
-const C = Math.round(_SW * 0.5 * 0.28); // ~13% of screen width, scales with device
+// C = wheel radius = half the container width, so each button fills its full corner
+const C = Math.round(_SW * 0.9 / 2);
 const RO = 10;         // outer corner radius
 const CR = C - RO;     // pre-computed C - RO
-// SVG pie-wedge paths — each fills the dead corner outside the wheel circle
-const PATH_TL = `M 0,${RO} Q 0,0 ${RO},0 L ${C},0 A ${C},${C} 0 0,1 0,${C} Z`;
-const PATH_TR = `M ${C},${RO} Q ${C},0 ${CR},0 L 0,0 A ${C},${C} 0 0,0 ${C},${C} Z`;
-const PATH_BL = `M 0,${CR} Q 0,${C} ${RO},${C} L ${C},${C} A ${C},${C} 0 0,0 0,0 Z`;
-const PATH_BR = `M ${C},${CR} Q ${C},${C} ${CR},${C} L 0,${C} A ${C},${C} 0 0,1 ${C},0 Z`;
+// SVG corner paths — each fills the dead corner outside the wheel.
+// Inner arc radius = C = R (wheel radius), centered at the wheel center in each
+// button's local coordinate space, giving a concave edge that matches the wheel circle.
+//   TL: wheel center at (C, C) → arc sweep=0 (CCW) from (C,0) to (0,C)
+//   TR: wheel center at (0, C) → arc sweep=1 (CW)  from (C,C) to (0,0)
+//   BL: wheel center at (C, 0) → arc sweep=1 (CW)  from (C,C) to (0,0)
+//   BR: wheel center at (0, 0) → arc sweep=1 (CW)  from (0,C) to (C,0)
+const PATH_TL = `M 0,${C} L 0,${RO} Q 0,0 ${RO},0 L ${C},0 A ${C},${C} 0 0,0 0,${C} Z`;
+const PATH_TR = `M 0,0 L ${CR},0 Q ${C},0 ${C},${RO} L ${C},${C} A ${C},${C} 0 0,0 0,0 Z`;
+const PATH_BL = `M 0,0 L 0,${CR} Q 0,${C} ${RO},${C} L ${C},${C} A ${C},${C} 0 0,1 0,0 Z`;
+const PATH_BR = `M ${C},0 L ${C},${CR} Q ${C},${C} ${CR},${C} L 0,${C} A ${C},${C} 0 0,0 ${C},0 Z`;
 
 const DEFAULT_SETTINGS: AppSettings = {
   darkMode: true,
@@ -514,7 +521,7 @@ export default function Index() {
         saveUndoSnapshot();
         if (field === 'end') {
           saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks));
-          if (idx === tasksRef.current.length - 1 && activeLagDays === undefined) {
+          if (activeLagDays === undefined) {
             setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
             setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
           }
@@ -545,6 +552,10 @@ export default function Index() {
               onShift: () => {
                 saveUndoSnapshot();
                 saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks));
+                if (activeLagDays === undefined) {
+                  setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
+                  setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+                }
               },
               onFree: () => {
                 stepLagCallbackRef.current = (confirmedLag: number) => {
@@ -1303,19 +1314,26 @@ export default function Index() {
     await saveTasks(newStoredTasks);
   }
 
-  async function confirmAddTask(name: string, reminderDays: number | null) {
+  async function confirmAddTask(name: string, reminderDays: number | null, durationDays?: number) {
     saveUndoSnapshot();
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // If user specified a duration, compute end date from current start
+    const taskStart = startDateRef.current;
+    const taskEnd = durationDays !== undefined
+      ? (() => { const d = new Date(taskStart); d.setDate(d.getDate() + durationDays); return d; })()
+      : endDateRef.current;
+
     let notificationId: string | undefined;
     if (reminderDays !== null) {
-      const id = await scheduleReminder(currentTaskNameRef.current, endDateRef.current, reminderDays);
+      const id = await scheduleReminder(currentTaskNameRef.current, taskEnd, reminderDays);
       notificationId = id ?? undefined;
     }
     const newTask: Task = {
       id: Date.now(),
       name: currentTaskNameRef.current,
-      startDate: startDateRef.current.toISOString(),
-      endDate: endDateRef.current.toISOString(),
+      startDate: taskStart.toISOString(),
+      endDate: taskEnd.toISOString(),
       color: TASK_COLORS[tasksRef.current.length % TASK_COLORS.length],
       duration,
       unit,
@@ -1328,9 +1346,9 @@ export default function Index() {
     await requestReviewIfAppropriate(updated.length);
     setCurrentTaskName(name);
     currentTaskNameRef.current = name;
-    const nextEnd = new Date(endDateRef.current);
+    const nextEnd = new Date(taskEnd);
     nextEnd.setDate(nextEnd.getDate() + 30);
-    setStartDateSync(endDateRef.current);
+    setStartDateSync(taskEnd);
     setEndDateSync(nextEnd);
     setTaskNameVisible(false);
   }
@@ -1447,13 +1465,22 @@ export default function Index() {
     );
   }
 
-  async function confirmRename(name: string, _reminderDays: number | null) {
+  async function confirmRename(name: string, reminderDays: number | null) {
   if (editingTaskId === null) {
     setCurrentTaskName(name);
     currentTaskNameRef.current = name;
   } else {
+    const task = tasksRef.current.find(t => t.id === editingTaskId);
+    if (task?.notificationId) await cancelReminder(task.notificationId);
+    let notificationId: string | undefined;
+    if (reminderDays !== null && task) {
+      const id = await scheduleReminder(name, new Date(task.endDate), reminderDays);
+      notificationId = id ?? undefined;
+    }
     const updated = tasksRef.current.map((t) =>
-      t.id === editingTaskId ? { ...t, name } : t
+      t.id === editingTaskId
+        ? { ...t, name, reminderDays: reminderDays ?? undefined, notificationId }
+        : t
     );
     await saveTasks(updated);
   }
@@ -2684,9 +2711,9 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               )}
               </View>
               <View style={styles.taskRight}>
-                {item.reminderDays && (
-                  <Text style={styles.reminderBell}>🔔</Text>
-                )}
+                <TouchableOpacity onPress={() => item.isActive ? handleRenameCurrentTask() : handleRenameTask(item.id)}>
+                  <Text style={[styles.reminderBell, { opacity: item.reminderDays ? 1 : 0.3 }]}>🔔</Text>
+                </TouchableOpacity>
                 <Text style={[styles.taskNum, { color: theme.muted }]}>#{i + 1}</Text>
                 <View style={styles.moveButtons}>
                   <TouchableOpacity
@@ -2842,10 +2869,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   onClear={handleLagClear}
   onCancel={() => { setLagEditVisible(false); setLagEditTaskIndex(-1); setLagEditInitialOverride(undefined); stepLagCallbackRef.current = null; }}
 />
-      <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 1} onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
+      <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 1} showDuration onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
       <TaskNameModal
         visible={renameModalVisible}
         taskNumber={editingTaskId === null ? 0 : tasks.findIndex(t => t.id === editingTaskId) + 1}
+        initialName={editingTaskId === null ? currentTaskName : tasks.find(t => t.id === editingTaskId)?.name}
+        initialReminderDays={editingTaskId === null ? undefined : tasks.find(t => t.id === editingTaskId)?.reminderDays}
         onConfirm={confirmRename}
         onCancel={() => { setEditingTaskId(null); setRenameModalVisible(false); }}
       />
@@ -2879,7 +2908,6 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         endDate={endDate}
         currentTaskName={currentTaskName}
         currentTaskColor={currentTaskColor}
-        year={startDate.getFullYear()}
         theme={theme}
       />
       <ProModal
@@ -3032,7 +3060,8 @@ zoomResetText: {
     gap: 2,
   },
   reminderBell: {
-    fontSize: 11,
+    fontSize: 15,
+    padding: 2,
   },
 
   toolbarIcon: {

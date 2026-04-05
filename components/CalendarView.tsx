@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
   Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,6 +17,7 @@ import Animated, {
   withDelay,
   withTiming,
 } from 'react-native-reanimated';
+import Svg, { Polygon } from 'react-native-svg';
 import { Milestone, Task } from './datewheel';
 
 const { width: SW } = Dimensions.get('window');
@@ -53,7 +55,6 @@ interface Props {
   endDate: Date;
   currentTaskName: string;
   currentTaskColor: string;
-  year: number;
   theme: {
     bg: string;
     card: string;
@@ -73,7 +74,6 @@ export default function CalendarView({
   endDate,
   currentTaskName,
   currentTaskColor,
-  year,
   theme,
 }: Props) {
   // ── Entrance / exit animation ─────────────────────────────────────────────
@@ -103,6 +103,8 @@ export default function CalendarView({
   }));
 
   // ── Pinch-to-zoom ─────────────────────────────────────────────────────────
+  const [tappedLabel, setTappedLabel] = useState<{ name: string; color: string } | null>(null);
+
   const zoom = useSharedValue(1.0);
   const pinchStartZoom = useRef(1.0);
 
@@ -138,30 +140,68 @@ export default function CalendarView({
     },
   ];
 
+  // Derive the full month range spanned by all tasks + milestones
+  const allDates = [
+    ...allTasks.map(t => new Date(t.startDate)),
+    ...allTasks.map(t => new Date(t.endDate)),
+    ...milestones.map(m => new Date(m.date)),
+  ];
+  const minDate = allDates.length > 0 ? allDates.reduce((a, b) => a < b ? a : b) : new Date();
+  const maxDate = allDates.length > 0 ? allDates.reduce((a, b) => a > b ? a : b) : new Date();
+  const months: { year: number; month: number }[] = [];
+  const cur = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+  const end = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+  while (cur <= end) {
+    months.push({ year: cur.getFullYear(), month: cur.getMonth() });
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  // Group into rows of 3
+  const monthRows: { year: number; month: number }[][] = [];
+  for (let i = 0; i < months.length; i += 3) monthRows.push(months.slice(i, i + 3));
+  // Header year label — show range if multi-year
+  const headerYear = minDate.getFullYear() === maxDate.getFullYear()
+    ? String(minDate.getFullYear())
+    : `${minDate.getFullYear()} – ${maxDate.getFullYear()}`;
+
   const msMap: Record<string, Milestone> = {};
   milestones.forEach(m => {
     const d = new Date(m.date);
     msMap[`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`] = m;
   });
 
-  function getDayColor(y: number, mo: number, d: number): string | null {
+  // Returns all tasks active on a given day (in order)
+  function getDayTasks(y: number, mo: number, d: number): Task[] {
     const ms = new Date(y, mo, d).getTime();
-    let color: string | null = null;
-    for (const task of allTasks) {
+    return allTasks.filter(task => {
       const s = new Date(task.startDate);
       const e = new Date(task.endDate);
       const sMs = new Date(s.getFullYear(), s.getMonth(), s.getDate()).getTime();
       const eMs = new Date(e.getFullYear(), e.getMonth(), e.getDate()).getTime();
-      if (ms >= sMs && ms <= eMs) color = task.color;
+      return ms >= sMs && ms <= eMs;
+    });
+  }
+
+  function getDayLabel(y: number, mo: number, d: number): { name: string; color: string } | null {
+    const msKey = `${y}-${mo}-${d}`;
+    if (msMap[msKey]) {
+      const m = msMap[msKey];
+      return { name: `◆ ${m.name}`, color: m.color };
     }
-    return color;
+    const dayTasks = getDayTasks(y, mo, d);
+    if (dayTasks.length === 0) return null;
+    if (dayTasks.length === 1) return { name: dayTasks[0].name, color: dayTasks[0].color };
+    // Multiple tasks — list them
+    return {
+      name: dayTasks.map(t => t.name).join(' · '),
+      color: dayTasks[dayTasks.length - 1].color,
+    };
   }
 
   // ── Month renderer ────────────────────────────────────────────────────────
-  function renderMonth(month: number) {
-    const numDays = daysInMonth(year, month);
-    const firstDow = firstDowOfMonth(year, month);
-    const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+  function renderMonth(yr: number, month: number) {
+    const numDays = daysInMonth(yr, month);
+    const firstDow = firstDowOfMonth(yr, month);
+    const isCurrentMonth = today.getFullYear() === yr && today.getMonth() === month;
 
     const cells: number[] = [];
     for (let i = 0; i < firstDow; i++) cells.push(0);
@@ -172,9 +212,9 @@ export default function CalendarView({
     for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
     return (
-      <View key={month} style={[styles.monthBox, { borderColor: theme.border, width: BASE_MONTH_W }]}>
+      <View key={`${yr}-${month}`} style={[styles.monthBox, { borderColor: theme.border, width: BASE_MONTH_W }]}>
         <Text style={[styles.monthName, { color: isCurrentMonth ? theme.accent : theme.text }]}>
-          {MONTH_NAMES[month]}
+          {MONTH_NAMES[month]}{months.length > 12 ? ` '${String(yr).slice(-2)}` : ''}
         </Text>
 
         <View style={styles.dowRow}>
@@ -197,42 +237,73 @@ export default function CalendarView({
               if (day === 0) {
                 return <View key={di} style={{ width: BASE_CELL, height: BASE_CELL }} />;
               }
-              const color = getDayColor(year, month, day);
+              const dayTasks = getDayTasks(yr, month, day);
+              const hasColor = dayTasks.length > 0;
+              const isOverlap = dayTasks.length >= 2;
+              const topColor = hasColor ? dayTasks[dayTasks.length - 1].color : null;
+              const botColor = isOverlap ? dayTasks[dayTasks.length - 2].color : null;
               const isToday =
-                today.getFullYear() === year &&
+                today.getFullYear() === yr &&
                 today.getMonth() === month &&
                 today.getDate() === day;
-              const msKey = `${year}-${month}-${day}`;
+              const msKey = `${yr}-${month}-${day}`;
               const milestone = msMap[msKey];
               const isSunSat = di === 0 || di === 6;
+              const S = BASE_CELL;
 
               return (
-                <View
+                <Pressable
                   key={di}
                   style={[
                     styles.dayCell,
-                    { width: BASE_CELL, height: BASE_CELL },
-                    color ? { backgroundColor: color + 'CC', borderRadius: 2 } : undefined,
+                    { width: S, height: S },
+                    !isOverlap && topColor ? { backgroundColor: topColor + 'CC', borderRadius: 2 } : undefined,
                     isToday ? {
                       borderWidth: 1.5,
-                      borderColor: color ? '#fff' : theme.accent,
-                      borderRadius: BASE_CELL / 2,
-                    } : undefined,
+                      borderColor: hasColor ? '#fff' : theme.accent,
+                      borderRadius: S / 2,
+                      overflow: 'hidden',
+                    } : { borderRadius: 2, overflow: 'hidden' },
                   ]}
+                  onPress={() => {
+                    const label = getDayLabel(yr, month, day);
+                    if (!label) { setTappedLabel(null); return; }
+                    setTappedLabel(prev =>
+                      prev?.name === label.name ? null : label
+                    );
+                  }}
                 >
+                  {/* Diagonal split for overlapping tasks */}
+                  {isOverlap && topColor && botColor && (
+                    <Svg
+                      width={S} height={S}
+                      style={StyleSheet.absoluteFill}
+                    >
+                      {/* Top-right triangle = most recent task */}
+                      <Polygon
+                        points={`0,0 ${S},0 ${S},${S}`}
+                        fill={topColor + 'CC'}
+                      />
+                      {/* Bottom-left triangle = previous overlapping task */}
+                      <Polygon
+                        points={`0,0 0,${S} ${S},${S}`}
+                        fill={botColor + 'CC'}
+                      />
+                    </Svg>
+                  )}
                   {milestone && (
                     <View style={[styles.milestoneDot, { backgroundColor: milestone.color }]} />
                   )}
                   <Text style={[
                     styles.dayText,
                     {
-                      color: color ? '#fff' : isToday ? theme.accent : isSunSat ? '#4A7FA5' : theme.text,
+                      color: hasColor ? '#fff' : isToday ? theme.accent : isSunSat ? '#4A7FA5' : theme.text,
                       fontWeight: isToday ? '700' : '400',
                     },
                   ]}>
                     {day}
                   </Text>
-                </View>
+                </Pressable>
               );
             })}
           </View>
@@ -257,7 +328,7 @@ export default function CalendarView({
 
           {/* Header — outside pinch zone */}
           <View style={[styles.header, { borderBottomColor: theme.border }]}>
-            <Text style={[styles.yearLabel, { color: theme.text }]}>{year}</Text>
+            <Text style={[styles.yearLabel, { color: theme.text }]}>{headerYear}</Text>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}>
               <Text style={[styles.closeBtn, { color: theme.accent }]}>✕ Close</Text>
             </TouchableOpacity>
@@ -273,7 +344,7 @@ export default function CalendarView({
             {allTasks.map(t => (
               <View key={t.id} style={styles.legendItem}>
                 <View style={[styles.legendSwatch, { backgroundColor: t.color }]} />
-                <Text style={[styles.legendText, { color: theme.muted }]} numberOfLines={1}>
+                <Text style={[styles.legendText, { color: theme.text }]} numberOfLines={1}>
                   {t.name}
                 </Text>
               </View>
@@ -281,37 +352,46 @@ export default function CalendarView({
             {milestones.map(m => (
               <View key={`ms-${m.id}`} style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: m.color }]} />
-                <Text style={[styles.legendText, { color: theme.muted }]} numberOfLines={1}>
+                <Text style={[styles.legendText, { color: theme.text }]} numberOfLines={1}>
                   {m.name}
                 </Text>
               </View>
             ))}
           </ScrollView>
 
-          {/* Pinch-to-zoom grid */}
-          <GestureDetector gesture={pinchGesture}>
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.scrollContent}
-            >
-              <Animated.View style={[styles.gridOuter, gridScaleStyle]}>
-                <View style={styles.gridInner}>
-                  <View style={styles.gridRow}>
-                    {[0, 1, 2].map(m => renderMonth(m))}
+          {/* Pinch-to-zoom grid + floating label overlay */}
+          <View style={{ flex: 1 }}>
+            <GestureDetector gesture={pinchGesture}>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scrollContent}
+              >
+                <Animated.View style={[styles.gridOuter, gridScaleStyle]}>
+                  <View style={styles.gridInner}>
+                    {monthRows.map((row, ri) => (
+                      <View key={ri} style={styles.gridRow}>
+                        {row.map(({ year: yr2, month: mo }) => renderMonth(yr2, mo))}
+                      </View>
+                    ))}
                   </View>
-                  <View style={styles.gridRow}>
-                    {[3, 4, 5].map(m => renderMonth(m))}
-                  </View>
-                  <View style={styles.gridRow}>
-                    {[6, 7, 8].map(m => renderMonth(m))}
-                  </View>
-                  <View style={styles.gridRow}>
-                    {[9, 10, 11].map(m => renderMonth(m))}
-                  </View>
-                </View>
-              </Animated.View>
-            </ScrollView>
-          </GestureDetector>
+                </Animated.View>
+              </ScrollView>
+            </GestureDetector>
+
+            {/* Floating task label — overlaid on calendar, dismisses on tap */}
+            {tappedLabel && (
+              <Pressable
+                style={[styles.labelBanner, { backgroundColor: tappedLabel.color + 'DD', borderColor: tappedLabel.color }]}
+                onPress={() => setTappedLabel(null)}
+              >
+                <View style={[styles.labelSwatch, { backgroundColor: '#fff' }]} />
+                <Text style={[styles.labelText, { color: '#fff' }]} numberOfLines={1}>
+                  {tappedLabel.name}
+                </Text>
+                <Text style={[styles.labelDismiss, { color: '#fff' }]}>✕</Text>
+              </Pressable>
+            )}
+          </View>
 
         </Animated.View>
       </GestureHandlerRootView>
@@ -339,34 +419,67 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   legend: {
-    maxHeight: 40,
+    maxHeight: 64,
     borderBottomWidth: 0.5,
   },
   legendContent: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    gap: 14,
+    paddingVertical: 12,
+    gap: 18,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 7,
   },
   legendSwatch: {
-    width: 10,
-    height: 10,
-    borderRadius: 3,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
+    width: 14,
+    height: 14,
     borderRadius: 4,
   },
+  legendDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+  },
   legendText: {
-    fontSize: 11,
-    maxWidth: 90,
+    fontSize: 14,
+    maxWidth: 120,
+  },
+  labelBanner: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 0,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 8,
+  },
+  labelSwatch: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  labelText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  labelDismiss: {
+    fontSize: 12,
+    fontWeight: '600',
+    opacity: 0.7,
   },
   scrollContent: {
     paddingBottom: 32,

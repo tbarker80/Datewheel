@@ -16,11 +16,23 @@ const LEAD_TIME_OPTIONS = [
   { label: '2 weeks before',  days: 14 },
 ];
 
+const DURATION_UNITS = ['Days', 'Weeks', 'Months'] as const;
+type DurationUnit = typeof DURATION_UNITS[number];
+
+function toCalendarDays(value: number, unit: DurationUnit): number {
+  if (unit === 'Weeks')  return value * 7;
+  if (unit === 'Months') return value * 30;
+  return value;
+}
+
 interface Props {
   visible: boolean;
-  onConfirm: (name: string, reminderDays: number | null) => void;
+  onConfirm: (name: string, reminderDays: number | null, durationDays?: number) => void;
   onCancel: () => void;
   taskNumber: number;
+  initialName?: string;
+  initialReminderDays?: number;
+  showDuration?: boolean;
 }
 
 export default function TaskNameModal({
@@ -28,22 +40,43 @@ export default function TaskNameModal({
   onConfirm,
   onCancel,
   taskNumber,
+  initialName,
+  initialReminderDays,
+  showDuration = false,
 }: Props) {
-  const [name, setName] = useState("");
-  const [reminderEnabled, setReminderEnabled] = useState(false);
-  const [selectedDays, setSelectedDays] = useState(3);
+  const [name, setName] = useState(initialName ?? "");
+  const [reminderEnabled, setReminderEnabled] = useState(initialReminderDays !== undefined);
+  const [selectedDays, setSelectedDays] = useState(initialReminderDays ?? 3);
+  const [durationValue, setDurationValue] = useState("30");
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>("Days");
+
+  // Sync when modal opens with new initial values
+  React.useEffect(() => {
+    if (visible) {
+      setName(initialName ?? "");
+      setReminderEnabled(initialReminderDays !== undefined);
+      setSelectedDays(initialReminderDays ?? 3);
+      if (showDuration) {
+        setDurationValue("30");
+        setDurationUnit("Days");
+      }
+    }
+  }, [visible, initialName, initialReminderDays, showDuration]);
 
   function reset() {
     setName("");
     setReminderEnabled(false);
     setSelectedDays(3);
+    setDurationValue("30");
+    setDurationUnit("Days");
   }
 
   function handleConfirm() {
     const taskName = name.trim() || `Task ${taskNumber}`;
     const reminderDays = reminderEnabled ? selectedDays : null;
+    const durationDays = showDuration ? toCalendarDays(Math.max(1, parseInt(durationValue) || 30), durationUnit) : undefined;
     reset();
-    onConfirm(taskName, reminderDays);
+    onConfirm(taskName, reminderDays, durationDays);
   }
 
   function handleCancel() {
@@ -79,6 +112,34 @@ export default function TaskNameModal({
             maxLength={40}
             onSubmitEditing={handleConfirm}
           />
+
+          {/* Duration picker — only shown when adding a new task */}
+          {showDuration && (
+            <View style={styles.durationSection}>
+              <Text style={styles.durationLabel}>Duration</Text>
+              <View style={styles.durationRow}>
+                <TextInput
+                  style={styles.durationInput}
+                  value={durationValue}
+                  onChangeText={v => setDurationValue(v.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  selectTextOnFocus
+                />
+                <View style={styles.durationUnits}>
+                  {DURATION_UNITS.map(u => (
+                    <TouchableOpacity
+                      key={u}
+                      style={[styles.unitBtn, durationUnit === u && styles.unitBtnActive]}
+                      onPress={() => setDurationUnit(u)}
+                    >
+                      <Text style={[styles.unitBtnText, durationUnit === u && styles.unitBtnTextActive]}>{u}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+          )}
 
           {/* Reminder toggle */}
           <View style={styles.reminderRow}>
@@ -249,5 +310,62 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#FFFFFF",
     fontWeight: "600",
+  },
+  durationSection: {
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#2A3F52',
+  },
+  durationLabel: {
+    fontSize: 13,
+    color: '#5A7A96',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  durationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  durationInput: {
+    width: 64,
+    backgroundColor: '#0F1923',
+    borderRadius: 10,
+    padding: 10,
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#2E7DBC',
+    textAlign: 'center',
+  },
+  durationUnits: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
+  },
+  unitBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2A3F52',
+    backgroundColor: '#0F1923',
+    alignItems: 'center',
+  },
+  unitBtnActive: {
+    borderColor: '#2E7DBC',
+    backgroundColor: '#1A3A5C',
+  },
+  unitBtnText: {
+    fontSize: 12,
+    color: '#5A7A96',
+    fontWeight: '500',
+  },
+  unitBtnTextActive: {
+    color: '#2E9BFF',
+    fontWeight: '600',
   },
 });
