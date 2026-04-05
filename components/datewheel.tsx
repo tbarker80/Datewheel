@@ -583,10 +583,14 @@ export default function DateWheel({
 
           {/* Active arc */}
           {activeArcPath !== '' && (
-            <Path d={activeArcPath} fill="none"
-              stroke={exceededYear ? OVERLAP_COLOR : TASK_COLORS[tasks.length % TASK_COLORS.length]}
-              strokeWidth={36} strokeOpacity={0.6}/>
-          )}
+  <Path
+    d={activeArcPath}
+    fill="none"
+    stroke={exceededYear ? OVERLAP_COLOR : TASK_COLORS[tasks.length % TASK_COLORS.length]}
+    strokeWidth={highlightedTaskId === null ? 40 : 36}
+    strokeOpacity={highlightedTaskId === null ? 0.9 : 0.6}
+  />
+)}
 
           {/* Ring borders */}
           <Circle cx={R} cy={R} r={RING_RADIUS + 18} fill="none" stroke="#2E7DBC" strokeWidth={1} strokeOpacity={0.4}/>

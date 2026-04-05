@@ -1353,6 +1353,7 @@ export default function Index() {
     setStartDateSync(taskEnd);
     setEndDateSync(nextEnd);
     setTaskNameVisible(false);
+    setTappedTaskId(null); // ensure active task is the focus after adding
   }
   async function confirmAddMilestone(name: string, date: Date, reminderDays: number | null) {
   saveUndoSnapshot();
@@ -2220,7 +2221,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   }
 
   return (
-    <View style={[styles.safeArea, { backgroundColor: theme.bg, paddingTop: insets.top }]}>
+    <View style={[styles.safeArea, { backgroundColor: theme.bg, paddingTop: Math.max(0, insets.top - 15) }]}>
       <StatusBar barStyle={settings.darkMode ? "light-content" : "dark-content"} backgroundColor={theme.bg} />
       <ScrollView
   style={styles.scroll}
@@ -2496,8 +2497,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("start")}>
-              <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} START</Text>
-              <Text style={[styles.taskDateValue, { color: theme.text }]}>{formatDate(activeTaskStart)}</Text>
+              <Text style={[styles.taskDateLabel, { color: tappedTask ? tappedTask.color : currentTaskColor }]}>{activeTaskLabel.toUpperCase()} START</Text>
+              <Text style={[styles.taskDateValue, { color: tappedTask ? tappedTask.color : currentTaskColor }]}>{formatDate(activeTaskStart)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('start', 1)}>
               <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
@@ -2508,14 +2509,62 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end")}>
-              <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} END</Text>
-              <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>{formatDate(activeTaskEnd)}</Text>
+              <Text style={[styles.taskDateLabel, { color: tappedTask ? tappedTask.color : currentTaskColor }]}>{activeTaskLabel.toUpperCase()} END</Text>
+              <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : tappedTask ? tappedTask.color : currentTaskColor }]}>{formatDate(activeTaskEnd)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('end', 1)}>
               <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Task navigator */}
+{tasks.length > 0 && (
+  <View style={styles.taskNavRow}>
+    <TouchableOpacity
+      style={styles.taskNavArrow}
+      onPress={() => {
+        const currentIndex = tappedTaskId !== null
+          ? tasks.findIndex(t => t.id === tappedTaskId)
+          : tasks.length; // active task = last
+        const prevIndex = currentIndex - 1;
+        if (prevIndex >= 0) {
+          handleTaskTap(tasks[prevIndex].id);
+        } else {
+          handleTaskTap(null); // wrap to active task
+        }
+      }}
+    >
+      <Text style={styles.taskNavArrowText}>◀◀</Text>
+    </TouchableOpacity>
+
+    <View style={styles.taskNavCenter}>
+      <Text style={styles.taskNavLabel}>
+        {tappedTaskId !== null
+          ? tasks.find(t => t.id === tappedTaskId)?.name ?? 'Task'
+          : currentTaskName}
+      </Text>
+      <Text style={styles.taskNavSub}>SELECTED TASKS</Text>
+    </View>
+
+    <TouchableOpacity
+      style={styles.taskNavArrow}
+      onPress={() => {
+        const currentIndex = tappedTaskId !== null
+          ? tasks.findIndex(t => t.id === tappedTaskId)
+          : tasks.length;
+        const nextIndex = currentIndex + 1;
+        if (nextIndex < tasks.length) {
+          handleTaskTap(tasks[nextIndex].id);
+        } else {
+          handleTaskTap(null); // wrap to active task
+        }
+      }}
+    >
+      <Text style={styles.taskNavArrowText}>▶▶</Text>
+    </TouchableOpacity>
+  </View>
+)}
 
 
         {/* Unit Selector Modal */}
@@ -2997,6 +3046,45 @@ const styles = StyleSheet.create({
   marginTop: 2,
   letterSpacing: 0.3,
 },
+taskNavRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  width: '100%',
+  backgroundColor: '#1C2B38',
+  borderRadius: 14,
+  marginBottom: 8,
+  overflow: 'hidden',
+},
+taskNavArrow: {
+  paddingVertical: 12,
+  paddingHorizontal: 20,
+  backgroundColor: '#1A3A5C',
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+taskNavArrowText: {
+  fontSize: 16,
+  color: '#2E9BFF',
+  fontWeight: '700',
+},
+taskNavCenter: {
+  flex: 1,
+  alignItems: 'center',
+  justifyContent: 'center',
+  paddingVertical: 12,
+},
+taskNavLabel: {
+  fontSize: 13,
+  fontWeight: '600',
+  color: '#FFFFFF',
+  marginBottom: 2,
+},
+taskNavSub: {
+  fontSize: 9,
+  fontWeight: '700',
+  color: '#5A7A96',
+  letterSpacing: 2,
+},
   zoomBtn: {
     width: 32,
     height: 32,
@@ -3054,7 +3142,7 @@ zoomResetText: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
+    paddingVertical: 0,
     borderRadius: 10,
     borderWidth: 0.5,
     gap: 1,
