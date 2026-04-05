@@ -35,9 +35,9 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import Svg, { Path as SvgPath } from 'react-native-svg';
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Path as SvgPath } from 'react-native-svg';
 import * as XLSX from 'xlsx';
 import { registerDatewheelHandler } from './_layout';
 
@@ -99,22 +99,24 @@ const MILESTONE_COLORS = ['#F0A500', '#EC4899', '#84CC16', '#2E9BFF', '#8B5CF6']
 const MAX_UNDO_LEVELS = 25;
 
 // Corner button geometry
-const _SW = Dimensions.get('window').width;
-// C = wheel radius = half the container width, so each button fills its full corner
-const C = Math.round(_SW * 0.9 / 2);
-const RO = 10;         // outer corner radius
-const CR = C - RO;     // pre-computed C - RO
-// SVG corner paths — each fills the dead corner outside the wheel.
-// Inner arc radius = C = R (wheel radius), centered at the wheel center in each
-// button's local coordinate space, giving a concave edge that matches the wheel circle.
-//   TL: wheel center at (C, C) → arc sweep=0 (CCW) from (C,0) to (0,C)
-//   TR: wheel center at (0, C) → arc sweep=1 (CW)  from (C,C) to (0,0)
-//   BL: wheel center at (C, 0) → arc sweep=1 (CW)  from (C,C) to (0,0)
-//   BR: wheel center at (0, 0) → arc sweep=1 (CW)  from (0,C) to (C,0)
-const PATH_TL = `M 0,${C} L 0,${RO} Q 0,0 ${RO},0 L ${C},0 A ${C},${C} 0 0,0 0,${C} Z`;
-const PATH_TR = `M 0,0 L ${CR},0 Q ${C},0 ${C},${RO} L ${C},${C} A ${C},${C} 0 0,0 0,0 Z`;
-const PATH_BL = `M 0,0 L 0,${CR} Q 0,${C} ${RO},${C} L ${C},${C} A ${C},${C} 0 0,1 0,0 Z`;
-const PATH_BR = `M ${C},0 L ${C},${CR} Q ${C},${C} ${CR},${C} L 0,${C} A ${C},${C} 0 0,0 ${C},0 Z`;
+const _SW   = Dimensions.get('window').width;
+const _R    = Math.round(_SW * 0.9 / 2);   // wheel radius (= half container width)
+const _GAP  = 10;                           // gap between wheel circle and button inner arc
+const _Rarc = _R - _GAP;                    // arc radius used in paths — smaller than _R = gap
+const C     = Math.round(_R * 0.44);        // button bounding square (44% of wheel radius)
+const CT    = Math.round(C * 0.52);         // touch-target square, anchored at outer corner
+const RO    = 10;                           // outer corner radius
+const CR    = C - RO;
+// Where the arc circle (radius _Rarc, centred at the wheel centre) intersects a button edge.
+// For TL: wheel centre is at (_R,_R) in local space; right edge is x=C.
+//   (C−_R)² + (y−_R)² = _Rarc²  →  y = _R − √(_Rarc²−(_R−C)²)
+const _di   = Math.round(_R - Math.sqrt(_Rarc * _Rarc - (_R - C) * (_R - C)));
+// Four paths — exact reflections of TL. Arc command uses _Rarc (not _R).
+//   TL sweep=0, TR sweep=1, BL sweep=1, BR sweep=0  (each x-reflection flips sweep)
+const PATH_TL = `M 0,${RO} Q 0,0 ${RO},0 L ${C},0 L ${C},${_di} A ${_Rarc},${_Rarc} 0 0,0 ${_di},${C} L 0,${C} Z`;
+const PATH_TR = `M ${C},${RO} Q ${C},0 ${CR},0 L 0,0 L 0,${_di} A ${_Rarc},${_Rarc} 0 0,1 ${C-_di},${C} L ${C},${C} Z`;
+const PATH_BL = `M 0,${CR} Q 0,${C} ${RO},${C} L ${C},${C} L ${C},${C-_di} A ${_Rarc},${_Rarc} 0 0,1 ${_di},0 L 0,0 Z`;
+const PATH_BR = `M ${C},${CR} Q ${C},${C} ${CR},${C} L 0,${C} L 0,${C-_di} A ${_Rarc},${_Rarc} 0 0,0 ${C-_di},0 L ${C},0 Z`;
 
 const DEFAULT_SETTINGS: AppSettings = {
   darkMode: true,
@@ -2273,7 +2275,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   </TouchableOpacity>
 
   <TouchableOpacity
-  style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 0.35 }]}
+  style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 1 }]}
   onPress={handleUndo}
   disabled={!canUndo}
 >
@@ -2288,26 +2290,26 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         <View style={styles.dateRow}>
           <View style={[styles.dateField, { backgroundColor: theme.card }]}>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', -1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("start")}>
-              <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE START</Text>
+              <Text style={[styles.fieldLabel, { color: theme.muted }]}>PROJ START</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineStart)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', 1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
             </TouchableOpacity>
           </View>
           <View style={[styles.dateField, { backgroundColor: theme.card }]}>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', -1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end")}>
-              <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIMELINE END</Text>
+              <Text style={[styles.fieldLabel, { color: theme.muted }]}>PROJECT END</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineEnd)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', 1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2384,10 +2386,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             }}
             activeOpacity={0.75}
           >
-            <Svg width={C} height={C}>
-              <SvgPath d={PATH_TL} fill={isLocked ? '#1A1200' : theme.card} opacity={0.92} />
-              <SvgPath d={PATH_TL} fill="none" stroke="#F0A500" strokeWidth={1} />
-            </Svg>
+            <View style={styles.cornerSvgTL} pointerEvents="none">
+              <Svg width={C} height={C}>
+                <SvgPath d={PATH_TL} fill={isLocked ? '#1A1200' : theme.card} opacity={0.92} />
+                <SvgPath d={PATH_TL} fill="none" stroke="#F0A500" strokeWidth={1} />
+              </Svg>
+            </View>
             <View style={styles.cornerContentTL}>
               <View style={styles.cornerLockIcon} />
               <Text style={[styles.cornerLabel, { color: '#F0A500' }]}>
@@ -2405,10 +2409,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             })}
             activeOpacity={0.75}
           >
-            <Svg width={C} height={C}>
-              <SvgPath d={PATH_TR} fill={theme.card} opacity={0.92} />
-              <SvgPath d={PATH_TR} fill="none" stroke={isPro ? theme.accent : theme.border} strokeWidth={1} />
-            </Svg>
+            <View style={styles.cornerSvgTR} pointerEvents="none">
+              <Svg width={C} height={C}>
+                <SvgPath d={PATH_TR} fill={theme.card} opacity={0.92} />
+                <SvgPath d={PATH_TR} fill="none" stroke={isPro ? theme.accent : theme.border} strokeWidth={1} />
+              </Svg>
+            </View>
             <View style={styles.cornerContentTR}>
               <View style={[styles.cornerCalIcon, { borderColor: isPro ? theme.accent : theme.muted }]} />
               <Text style={[styles.cornerLabel, isPro && { color: theme.accent }]}>
@@ -2423,10 +2429,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             onPress={handleAddTask}
             activeOpacity={0.75}
           >
-            <Svg width={C} height={C}>
-              <SvgPath d={PATH_BL} fill={theme.card} opacity={0.92} />
-              <SvgPath d={PATH_BL} fill="none" stroke={currentTaskColor} strokeWidth={1} />
-            </Svg>
+            <View style={styles.cornerSvgBL} pointerEvents="none">
+              <Svg width={C} height={C}>
+                <SvgPath d={PATH_BL} fill={theme.card} opacity={0.92} />
+                <SvgPath d={PATH_BL} fill="none" stroke={currentTaskColor} strokeWidth={1} />
+              </Svg>
+            </View>
             <View style={styles.cornerContentBL}>
               <View style={[styles.cornerDot, { backgroundColor: currentTaskColor }]} />
               <Text style={[styles.cornerLabel, { color: currentTaskColor }]}>
@@ -2441,10 +2449,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             onPress={() => requirePro(() => setMilestoneModalVisible(true))}
             activeOpacity={0.75}
           >
-            <Svg width={C} height={C}>
-              <SvgPath d={PATH_BR} fill={theme.card} opacity={0.92} />
-              <SvgPath d={PATH_BR} fill="none" stroke={isPro ? '#F0A500' : theme.border} strokeWidth={1} />
-            </Svg>
+            <View style={styles.cornerSvgBR} pointerEvents="none">
+              <Svg width={C} height={C}>
+                <SvgPath d={PATH_BR} fill={theme.card} opacity={0.92} />
+                <SvgPath d={PATH_BR} fill="none" stroke={isPro ? '#F0A500' : theme.border} strokeWidth={1} />
+              </Svg>
+            </View>
             <View style={styles.cornerContentBR}>
               <View style={styles.cornerDiamond} />
               <Text style={[styles.cornerLabel, isPro && { color: '#F0A500' }]}>
@@ -2483,26 +2493,26 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         <View style={[styles.taskDateRow, { backgroundColor: theme.card }]}>
           <View style={styles.taskDateField}>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('start', -1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("start")}>
               <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} START</Text>
               <Text style={[styles.taskDateValue, { color: theme.text }]}>{formatDate(activeTaskStart)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('start', 1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
             </TouchableOpacity>
           </View>
           <View style={[styles.taskDateField, { borderLeftWidth: 0.5, borderLeftColor: theme.border }]}>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('end', -1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>−</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end")}>
               <Text style={[styles.taskDateLabel, { color: theme.muted }]}>{activeTaskLabel.toUpperCase()} END</Text>
               <Text style={[styles.taskDateValue, { color: isDragging ? theme.accent : theme.text }]}>{formatDate(activeTaskEnd)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftActiveTask('end', 1)}>
-              <Text style={[styles.dateStepText, { color: theme.muted }]}>+</Text>
+              <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -3141,15 +3151,23 @@ zoomResetText: {
   cancelTemplateBtn: { marginHorizontal: 12, marginBottom: 16, padding: 14, alignItems: "center" },
   cancelTemplateBtnText: { fontSize: 14, color: "#5A7A96" },
   wheelContainer: { position: 'relative', alignSelf: 'center', width: _SW * 0.9 },
-  cornerBtn: { position: 'absolute', width: C, height: C },
-  cornerTL: { top: 0, left: 0 },
-  cornerTR: { top: 0, right: 0 },
-  cornerBL: { bottom: 0, left: 0 },
-  cornerBR: { bottom: 0, right: 0 },
-  cornerContentTL: { position: 'absolute', top: 10, left: 10, alignItems: 'center', gap: 2 },
-  cornerContentTR: { position: 'absolute', top: 10, right: 10, alignItems: 'center', gap: 2 },
-  cornerContentBL: { position: 'absolute', bottom: 10, left: 10, alignItems: 'center', gap: 2 },
-  cornerContentBR: { position: 'absolute', bottom: 10, right: 10, alignItems: 'center', gap: 2 },
+  // Touch target = CT×CT square at each outer corner; SVG (C×C) overflows inward.
+  cornerBtn: { position: 'absolute', width: CT, height: CT, overflow: 'visible' },
+  cornerTL: { top: -14, left: -8 },
+  cornerTR: { top: -14, right: -8 },
+  cornerBL: { bottom: -4, left: -10 },
+  cornerBR: { bottom: -4, right: -10 },
+  // SVG anchored so its outer corner aligns with the container's true corner.
+  // TL/TR: outer corner = SVG (0,0) → anchor top.  BL/BR: outer corner = SVG (x,C) → anchor bottom.
+  cornerSvgTL: { position: 'absolute', top: 0, left: 0 },
+  cornerSvgTR: { position: 'absolute', top: 0, right: 0 },
+  cornerSvgBL: { position: 'absolute', bottom: 0, left: 0 },
+  cornerSvgBR: { position: 'absolute', bottom: 0, right: 0 },
+  // Labels at the true outer corner of each button (inside CT box)
+  cornerContentTL: { position: 'absolute', top: 6, left: 6, alignItems: 'center', gap: 2 },
+  cornerContentTR: { position: 'absolute', top: 6, right: 6, alignItems: 'center', gap: 2 },
+  cornerContentBL: { position: 'absolute', bottom: 6, left: 6, alignItems: 'center', gap: 2 },
+  cornerContentBR: { position: 'absolute', bottom: 6, right: 6, alignItems: 'center', gap: 2 },
   cornerLabel: { fontSize: 9, color: '#5A7A96', fontWeight: '600', textAlign: 'center' },
   cornerDot: { width: 8, height: 8, borderRadius: 4 },
   cornerDiamond: { width: 8, height: 8, backgroundColor: '#F0A500', transform: [{ rotate: '45deg' }] },
