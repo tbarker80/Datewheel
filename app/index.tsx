@@ -12,6 +12,7 @@ import {
 import OnboardingModal from '@/components/OnboardingModal';
 import { useProStatus } from "@/components/ProContext";
 import ProModal from "@/components/ProModal";
+import ReminderModal from "@/components/ReminderModal";
 import SettingsModal, { AppSettings } from "@/components/SettingsModal";
 import TaskNameModal from "@/components/TaskNameModal";
 import TemplatesModal, { Project, saveTemplate, Template } from "@/components/TemplatesModal";
@@ -104,7 +105,8 @@ const _R    = Math.round(_SW * 0.9 / 2);   // wheel radius (= half container wid
 const _GAP  = 10;                           // gap between wheel circle and button inner arc
 const _Rarc = _R - _GAP;                    // arc radius used in paths — smaller than _R = gap
 const C     = Math.round(_R * 0.44);        // button bounding square (44% of wheel radius)
-const CT    = Math.round(C * 0.52);         // touch-target square, anchored at outer corner
+const CT    = Math.round(C * 0.52);         // touch-target square
+const _BTNSHIFT = Math.round(C * 0.30);    // how far inward the touch target shifts from the outer corner
 const RO    = 10;                           // outer corner radius
 const CR    = C - RO;
 // Where the arc circle (radius _Rarc, centred at the wheel centre) intersects a button edge.
@@ -268,6 +270,10 @@ export default function Index() {
   const currentTaskNameRef = useRef<string>("Current Task");
   const savedTappedTaskIdRef = useRef<number | null>(null);
   const stepLagCallbackRef = useRef<((lagDays: number) => void) | null>(null);
+  const activeTaskReminderDaysRef = useRef<number | undefined>(undefined);
+  const [activeTaskReminderDays, setActiveTaskReminderDays] = useState<number | undefined>(undefined);
+  type ReminderEditTarget = { kind: 'activeTask' } | { kind: 'task'; id: number } | { kind: 'milestone'; id: number };
+  const [reminderEditTarget, setReminderEditTarget] = useState<ReminderEditTarget | null>(null);
 
   const duration = calcDuration(startDate, endDate, unit, settings.holidayCountry);
   const totalDuration = calcTotalDuration(tasks, endDate, unit, settings.holidayCountry);
@@ -1165,6 +1171,59 @@ export default function Index() {
     setRenameModalVisible(true);
   }
 
+  function handleBellPress(item: { id: number; isActive?: boolean }) {
+    if (item.isActive) {
+      setReminderEditTarget({ kind: 'activeTask' });
+    } else {
+      setReminderEditTarget({ kind: 'task', id: item.id });
+    }
+  }
+
+  function handleMilestoneBellPress(id: number) {
+    setReminderEditTarget({ kind: 'milestone', id });
+  }
+
+  async function confirmSetReminder(days: number | null) {
+    if (!reminderEditTarget) return;
+    if (reminderEditTarget.kind === 'activeTask') {
+      const v = days ?? undefined;
+      activeTaskReminderDaysRef.current = v;
+      setActiveTaskReminderDays(v);
+    } else if (reminderEditTarget.kind === 'task') {
+      const task = tasksRef.current.find(t => t.id === reminderEditTarget.id);
+      if (!task) return;
+      if (task.notificationId) await cancelReminder(task.notificationId);
+      let notificationId: string | undefined;
+      if (days !== null) {
+        const id = await scheduleReminder(task.name, new Date(task.endDate), days);
+        notificationId = id ?? undefined;
+      }
+      const updated = tasksRef.current.map(t =>
+        t.id === reminderEditTarget.id
+          ? { ...t, reminderDays: days ?? undefined, notificationId }
+          : t
+      );
+      await saveTasks(updated);
+    } else if (reminderEditTarget.kind === 'milestone') {
+      const m = milestonesRef.current.find(m => m.id === reminderEditTarget.id);
+      if (!m) return;
+      if (m.notificationId) await cancelReminder(m.notificationId);
+      let notificationId: string | undefined;
+      if (days !== null) {
+        const id = await scheduleReminder(m.name, new Date(m.date), days);
+        notificationId = id ?? undefined;
+      }
+      const updated = milestonesRef.current.map(ms =>
+        ms.id === reminderEditTarget.id
+          ? { ...ms, reminderDays: days ?? undefined, notificationId }
+          : ms
+      );
+      setMilestonesSync(updated);
+      await AsyncStorage.setItem('milestones', JSON.stringify(updated));
+    }
+    setReminderEditTarget(null);
+  }
+
   function handleRenameTask(id: number) {
     setEditingTaskId(id);
     setRenameModalVisible(true);
@@ -1316,59 +1375,58 @@ export default function Index() {
     await saveTasks(newStoredTasks);
   }
 
-  async function confirmAddTask(name: string, reminderDays: number | null, durationDays?: number) {
-    saveUndoSnapshot();
-    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-    // If user specified a duration, compute end date from current start
-    const taskStart = startDateRef.current;
-    const taskEnd = durationDays !== undefined
-      ? (() => { const d = new Date(taskStart); d.setDate(d.getDate() + durationDays); return d; })()
-      : endDateRef.current;
-
-    let notificationId: string | undefined;
-    if (reminderDays !== null) {
-      const id = await scheduleReminder(currentTaskNameRef.current, taskEnd, reminderDays);
-      notificationId = id ?? undefined;
-    }
-    const newTask: Task = {
-      id: Date.now(),
-      name: currentTaskNameRef.current,
-      startDate: taskStart.toISOString(),
-      endDate: taskEnd.toISOString(),
-      color: TASK_COLORS[tasksRef.current.length % TASK_COLORS.length],
-      duration,
-      unit,
-      notificationId,
-      reminderDays: reminderDays ?? undefined,
-    };
-
-    const updated = [...tasksRef.current, newTask];
-    await saveTasks(updated);
-    await requestReviewIfAppropriate(updated.length);
-    setCurrentTaskName(name);
-    currentTaskNameRef.current = name;
-    const nextEnd = new Date(taskEnd);
-    nextEnd.setDate(nextEnd.getDate() + 30);
-    setStartDateSync(taskEnd);
-    setEndDateSync(nextEnd);
-    setTaskNameVisible(false);
-    setTappedTaskId(null); // ensure active task is the focus after adding
-  }
-  async function confirmAddMilestone(name: string, date: Date, reminderDays: number | null) {
+  async function confirmAddTask(name: string, durationDays?: number) {
   saveUndoSnapshot();
+  if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+  // The task being stored uses the CURRENT active dates — unchanged
+  const taskStart = startDateRef.current;
+  const taskEnd = endDateRef.current;
+
+  const savedReminderDays = activeTaskReminderDaysRef.current;
+  activeTaskReminderDaysRef.current = undefined;
+  setActiveTaskReminderDays(undefined);
+
   let notificationId: string | undefined;
-  if (reminderDays !== null) {
-    const id = await scheduleReminder(name, date, reminderDays);
+  if (savedReminderDays !== undefined) {
+    const id = await scheduleReminder(currentTaskNameRef.current, taskEnd, savedReminderDays);
     notificationId = id ?? undefined;
   }
+
+  const newTask: Task = {
+    id: Date.now(),
+    name: currentTaskNameRef.current,
+    startDate: taskStart.toISOString(),
+    endDate: taskEnd.toISOString(),
+    color: TASK_COLORS[tasksRef.current.length % TASK_COLORS.length],
+    duration: String(daysBetween(taskStart, taskEnd)),
+    unit,
+    notificationId,
+    reminderDays: savedReminderDays,
+  };
+
+  const updated = [...tasksRef.current, newTask];
+  await saveTasks(updated);
+  await requestReviewIfAppropriate(updated.length);
+
+  // The NEW active task uses the duration the user entered in the modal
+  setCurrentTaskName(name);
+  currentTaskNameRef.current = name;
+  const newActiveStart = taskEnd;
+  const newActiveEnd = new Date(newActiveStart);
+  newActiveEnd.setDate(newActiveEnd.getDate() + (durationDays ?? 30));
+  setStartDateSync(newActiveStart);
+  setEndDateSync(newActiveEnd);
+  setTaskNameVisible(false);
+  setTappedTaskId(null);
+}
+  async function confirmAddMilestone(name: string, date: Date) {
+  saveUndoSnapshot();
   const newMilestone: Milestone = {
     id: Date.now(),
     name,
     date: date.toISOString(),
     color: MILESTONE_COLORS[milestonesRef.current.length % MILESTONE_COLORS.length],
-    notificationId,
-    reminderDays: reminderDays ?? undefined,
   };
   const updated = [...milestonesRef.current, newMilestone];
   setMilestonesSync(updated);
@@ -1377,7 +1435,7 @@ export default function Index() {
   if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 }
 
-  async function confirmRenameMilestone(newName: string, _reminderDays: number | null) {
+  async function confirmRenameMilestone(newName: string) {
   if (!renamingMilestone) return;
   saveUndoSnapshot();
   const updated = milestonesRef.current.map(m =>
@@ -1468,22 +1526,21 @@ export default function Index() {
     );
   }
 
-  async function confirmRename(name: string, reminderDays: number | null) {
+  async function confirmRename(name: string) {
   if (editingTaskId === null) {
     setCurrentTaskName(name);
     currentTaskNameRef.current = name;
   } else {
     const task = tasksRef.current.find(t => t.id === editingTaskId);
+    // Reschedule notification with updated name if reminder exists
+    let notificationId = task?.notificationId;
     if (task?.notificationId) await cancelReminder(task.notificationId);
-    let notificationId: string | undefined;
-    if (reminderDays !== null && task) {
-      const id = await scheduleReminder(name, new Date(task.endDate), reminderDays);
+    if (task?.reminderDays) {
+      const id = await scheduleReminder(name, new Date(task.endDate), task.reminderDays);
       notificationId = id ?? undefined;
     }
     const updated = tasksRef.current.map((t) =>
-      t.id === editingTaskId
-        ? { ...t, name, reminderDays: reminderDays ?? undefined, notificationId }
-        : t
+      t.id === editingTaskId ? { ...t, name, notificationId } : t
     );
     await saveTasks(updated);
   }
@@ -2770,8 +2827,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               )}
               </View>
               <View style={styles.taskRight}>
-                <TouchableOpacity onPress={() => item.isActive ? handleRenameCurrentTask() : handleRenameTask(item.id)}>
-                  <Text style={[styles.reminderBell, { opacity: item.reminderDays ? 1 : 0.3 }]}>🔔</Text>
+                <TouchableOpacity onPress={() => handleBellPress(item)}>
+                  <Text style={[styles.reminderBell, { opacity: (item.isActive ? activeTaskReminderDays : item.reminderDays) ? 1 : 0.3 }]}>🔔</Text>
                 </TouchableOpacity>
                 <Text style={[styles.taskNum, { color: theme.muted }]}>#{i + 1}</Text>
                 <View style={styles.moveButtons}>
@@ -2813,9 +2870,9 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   </Text>
                 </View>
                 <View style={styles.milestoneRight}>
-                  {milestone.reminderDays && (
-                    <Text style={styles.reminderBell}>🔔</Text>
-                  )}
+                  <TouchableOpacity onPress={() => handleMilestoneBellPress(milestone.id)}>
+                    <Text style={[styles.reminderBell, { opacity: milestone.reminderDays ? 1 : 0.3 }]}>🔔</Text>
+                  </TouchableOpacity>
                   <Text style={[styles.milestoneTag, { color: milestone.color }]}>◆</Text>
                 </View>
               </TouchableOpacity>
@@ -2933,7 +2990,6 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         visible={renameModalVisible}
         taskNumber={editingTaskId === null ? 0 : tasks.findIndex(t => t.id === editingTaskId) + 1}
         initialName={editingTaskId === null ? currentTaskName : tasks.find(t => t.id === editingTaskId)?.name}
-        initialReminderDays={editingTaskId === null ? undefined : tasks.find(t => t.id === editingTaskId)?.reminderDays}
         onConfirm={confirmRename}
         onCancel={() => { setEditingTaskId(null); setRenameModalVisible(false); }}
       />
@@ -2985,6 +3041,23 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         defaultDate={endDateRef.current}
         onConfirm={confirmAddMilestone}
         onCancel={() => setMilestoneModalVisible(false)}
+      />
+      <ReminderModal
+        visible={reminderEditTarget !== null}
+        itemName={
+          reminderEditTarget === null ? '' :
+          reminderEditTarget.kind === 'activeTask' ? currentTaskName :
+          reminderEditTarget.kind === 'task' ? (tasksRef.current.find(t => t.id === reminderEditTarget.id)?.name ?? '') :
+          (milestonesRef.current.find(m => m.id === reminderEditTarget.id)?.name ?? '')
+        }
+        initialReminderDays={
+          reminderEditTarget === null ? undefined :
+          reminderEditTarget.kind === 'activeTask' ? activeTaskReminderDays :
+          reminderEditTarget.kind === 'task' ? tasksRef.current.find(t => t.id === reminderEditTarget.id)?.reminderDays :
+          milestonesRef.current.find(m => m.id === reminderEditTarget.id)?.reminderDays
+        }
+        onConfirm={confirmSetReminder}
+        onCancel={() => setReminderEditTarget(null)}
       />
       <DateTimePickerModal
         isVisible={milestoneDatePickerVisible}
@@ -3241,21 +3314,20 @@ zoomResetText: {
   wheelContainer: { position: 'relative', alignSelf: 'center', width: _SW * 0.9 },
   // Touch target = CT×CT square at each outer corner; SVG (C×C) overflows inward.
   cornerBtn: { position: 'absolute', width: CT, height: CT, overflow: 'visible' },
-  cornerTL: { top: -14, left: -8 },
-  cornerTR: { top: -14, right: -8 },
-  cornerBL: { bottom: -4, left: -10 },
-  cornerBR: { bottom: -4, right: -10 },
-  // SVG anchored so its outer corner aligns with the container's true corner.
-  // TL/TR: outer corner = SVG (0,0) → anchor top.  BL/BR: outer corner = SVG (x,C) → anchor bottom.
-  cornerSvgTL: { position: 'absolute', top: 0, left: 0 },
-  cornerSvgTR: { position: 'absolute', top: 0, right: 0 },
-  cornerSvgBL: { position: 'absolute', bottom: 0, left: 0 },
-  cornerSvgBR: { position: 'absolute', bottom: 0, right: 0 },
+  cornerTL: { top: -14 + _BTNSHIFT, left: -8 + _BTNSHIFT },
+  cornerTR: { top: -14 + _BTNSHIFT, right: -8 + _BTNSHIFT },
+  cornerBL: { bottom: -4 + _BTNSHIFT, left: -10 + _BTNSHIFT },
+  cornerBR: { bottom: -4 + _BTNSHIFT, right: -10 + _BTNSHIFT },
+  // SVG compensates by the same amount so the border stays visually anchored to the outer corner.
+  cornerSvgTL: { position: 'absolute', top: -_BTNSHIFT, left: -_BTNSHIFT },
+  cornerSvgTR: { position: 'absolute', top: -_BTNSHIFT, right: -_BTNSHIFT },
+  cornerSvgBL: { position: 'absolute', bottom: -_BTNSHIFT, left: -_BTNSHIFT },
+  cornerSvgBR: { position: 'absolute', bottom: -_BTNSHIFT, right: -_BTNSHIFT },
   // Labels at the true outer corner of each button (inside CT box)
-  cornerContentTL: { position: 'absolute', top: 6, left: 6, alignItems: 'center', gap: 2 },
-  cornerContentTR: { position: 'absolute', top: 6, right: 6, alignItems: 'center', gap: 2 },
-  cornerContentBL: { position: 'absolute', bottom: 6, left: 6, alignItems: 'center', gap: 2 },
-  cornerContentBR: { position: 'absolute', bottom: 6, right: 6, alignItems: 'center', gap: 2 },
+  cornerContentTL: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  cornerContentTR: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  cornerContentBL: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  cornerContentBR: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 2 },
   cornerLabel: { fontSize: 9, color: '#5A7A96', fontWeight: '600', textAlign: 'center' },
   cornerDot: { width: 8, height: 8, borderRadius: 4 },
   cornerDiamond: { width: 8, height: 8, backgroundColor: '#F0A500', transform: [{ rotate: '45deg' }] },

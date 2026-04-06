@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Modal,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -10,17 +9,10 @@ import {
 } from 'react-native';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 
-const LEAD_TIME_OPTIONS = [
-  { label: '1 day before',   days: 1 },
-  { label: '3 days before',  days: 3 },
-  { label: '1 week before',  days: 7 },
-  { label: '2 weeks before', days: 14 },
-];
-
 interface Props {
   visible: boolean;
   defaultDate?: Date;
-  onConfirm: (name: string, date: Date, reminderDays: number | null) => void;
+  onConfirm: (name: string, date: Date) => void;
   onCancel: () => void;
 }
 
@@ -34,33 +26,24 @@ export default function MilestoneModal({ visible, defaultDate, onConfirm, onCanc
   const [name, setName] = useState('');
   const [date, setDate] = useState(defaultDate || new Date());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
-  const [reminderEnabled, setReminderEnabled] = useState(false);
-  const [selectedDays, setSelectedDays] = useState(3);
 
   React.useEffect(() => {
     if (visible) {
       setDate(defaultDate || new Date());
       setName('');
-      setReminderEnabled(false);
-      setSelectedDays(3);
     }
   }, [visible, defaultDate]);
 
   function handleConfirm() {
     const finalName = name.trim() || 'Milestone';
-    const reminderDays = reminderEnabled ? selectedDays : null;
-    onConfirm(finalName, date, reminderDays);
+    onConfirm(finalName, date);
     setName('');
     setDate(defaultDate || new Date());
-    setReminderEnabled(false);
-    setSelectedDays(3);
   }
 
   function handleCancel() {
     setName('');
     setDate(defaultDate || new Date());
-    setReminderEnabled(false);
-    setSelectedDays(3);
     onCancel();
   }
 
@@ -116,43 +99,6 @@ export default function MilestoneModal({ visible, defaultDate, onConfirm, onCanc
               {name.trim() || 'Milestone'} · {formatDate(date)}
             </Text>
           </View>
-
-          {/* Reminder toggle */}
-          <View style={styles.reminderRow}>
-            <View style={styles.reminderLeft}>
-              <Text style={styles.reminderLabel}>Add Reminder</Text>
-              <Text style={styles.reminderSub}>Notify before this milestone</Text>
-            </View>
-            <Switch
-              value={reminderEnabled}
-              onValueChange={setReminderEnabled}
-              trackColor={{ false: '#2A3F52', true: '#2E7DBC' }}
-              thumbColor={reminderEnabled ? '#FFFFFF' : '#5A7A96'}
-            />
-          </View>
-
-          {/* Lead time picker */}
-          {reminderEnabled && (
-            <View style={styles.leadTimeContainer}>
-              {LEAD_TIME_OPTIONS.map((option) => (
-                <TouchableOpacity
-                  key={option.days}
-                  style={[
-                    styles.leadTimeBtn,
-                    selectedDays === option.days && styles.leadTimeBtnActive,
-                  ]}
-                  onPress={() => setSelectedDays(option.days)}
-                >
-                  <Text style={[
-                    styles.leadTimeBtnText,
-                    selectedDays === option.days && styles.leadTimeBtnTextActive,
-                  ]}>
-                    {option.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
 
           {/* Buttons */}
           <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
@@ -246,54 +192,6 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '45deg' }],
   },
   previewText: { fontSize: 13, color: '#5A7A96', flex: 1 },
-  reminderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 0.5,
-    borderTopColor: '#2A3F52',
-  },
-  reminderLeft: { flex: 1 },
-  reminderLabel: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    fontWeight: '500',
-  },
-  reminderSub: {
-    fontSize: 11,
-    color: '#5A7A96',
-    marginTop: 2,
-  },
-  leadTimeContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-  },
-  leadTimeBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2A3F52',
-    backgroundColor: '#0F1923',
-  },
-  leadTimeBtnActive: {
-    borderColor: '#2E7DBC',
-    backgroundColor: '#1A3A5C',
-  },
-  leadTimeBtnText: {
-    fontSize: 12,
-    color: '#5A7A96',
-    fontWeight: '500',
-  },
-  leadTimeBtnTextActive: {
-    color: '#2E9BFF',
-    fontWeight: '600',
-  },
   confirmBtn: {
     marginHorizontal: 12,
     marginTop: 8,
