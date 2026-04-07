@@ -106,7 +106,7 @@ const _GAP  = 10;                           // gap between wheel circle and butt
 const _Rarc = _R - _GAP;                    // arc radius used in paths — smaller than _R = gap
 const C     = Math.round(_R * 0.44);        // button bounding square (44% of wheel radius)
 const CT    = Math.round(C * 0.52);         // touch-target square
-const _BTNSHIFT = Math.round(C * 0.30);    // how far inward the touch target shifts from the outer corner
+const _BTNSHIFT = Math.round(C * 0.15);    // how far inward the touch target shifts from the outer corner
 const RO    = 10;                           // outer corner radius
 const CR    = C - RO;
 // Where the arc circle (radius _Rarc, centred at the wheel centre) intersects a button edge.
@@ -180,16 +180,27 @@ async function saveProject(
   currentTaskName: string,
   unit: string,
   startDate: Date,
-  endDate: Date
-): Promise<void> {
+  endDate: Date,
+  overwriteId?: number
+): Promise<number> {
   try {
     const stored = await AsyncStorage.getItem("projects");
     const existing: Project[] = stored ? JSON.parse(stored) : [];
     const now = new Date().toLocaleDateString("en-US", {
       month: "short", day: "numeric", year: "numeric",
     });
+    if (overwriteId !== undefined) {
+      const updated = existing.map(p =>
+        p.id === overwriteId
+          ? { ...p, name, tasks, currentTaskName, unit, startDate: startDate.toISOString(), endDate: endDate.toISOString(), updatedAt: now }
+          : p
+      );
+      await AsyncStorage.setItem("projects", JSON.stringify(updated));
+      return overwriteId;
+    }
+    const id = Date.now();
     const newProject: Project = {
-      id: Date.now(),
+      id,
       name,
       tasks,
       currentTaskName,
@@ -200,8 +211,10 @@ async function saveProject(
       updatedAt: now,
     };
     await AsyncStorage.setItem("projects", JSON.stringify([newProject, ...existing]));
+    return id;
   } catch (e) {
     console.warn('Failed to save project:', e);
+    return overwriteId ?? -1;
   }
 }
 
@@ -238,6 +251,9 @@ export default function Index() {
   const [proModalVisible, setProModalVisible] = useState(false);
   const [milestoneModalVisible, setMilestoneModalVisible] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [saveAsVisible, setSaveAsVisible] = useState(false);
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  const [currentProjectName, setCurrentProjectName] = useState<string | null>(null);
   const [activeLagDays, setActiveLagDays] = useState<number | undefined>(undefined);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -454,10 +470,9 @@ export default function Index() {
   }
 
   function applyStepCascade(fromIndex: number, toIndex: number, deltaMs: number, taskList: Task[]): Task[] {
+    if (fromIndex > toIndex) return [...taskList]; // no tasks in range
     const result = [...taskList];
-    const lo = Math.min(fromIndex, toIndex);
-    const hi = Math.max(fromIndex, toIndex);
-    for (let i = lo; i <= hi; i++) {
+    for (let i = fromIndex; i <= toIndex; i++) {
       if (i < 0 || i >= result.length) continue;
       if (result[i].lagDays !== undefined) continue;
       const s = new Date(new Date(result[i].startDate).getTime() + deltaMs);
@@ -1568,6 +1583,8 @@ export default function Index() {
           setMilestonesSync([]);
           await saveTasks([]);
           await AsyncStorage.removeItem("milestones");
+          setCurrentProjectId(null);
+          setCurrentProjectName(null);
         },
       },
     ]);
@@ -1790,10 +1807,25 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     setUnitModalVisible(true);
   }
 
+  async function handleSave() {
+    if (currentProjectId !== null && currentProjectName !== null) {
+      // Overwrite existing project silently
+      await saveProject(currentProjectName, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current, currentProjectId);
+      if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert("Saved", `"${currentProjectName}" has been updated.`);
+    } else {
+      // No current project — behave like Save As
+      setSaveName("");
+      setSaveAsVisible(true);
+    }
+  }
+
   async function handleSaveAsProject() {
     const name = saveName.trim() || `Project ${new Date().toLocaleDateString()}`;
-    await saveProject(name, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current);
-    setSaveName(""); setSaveVisible(false);
+    const id = await saveProject(name, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current);
+    setCurrentProjectId(id);
+    setCurrentProjectName(name);
+    setSaveName(""); setSaveAsVisible(false);
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert("Saved!", `"${name}" saved as a project.`);
   }
@@ -2275,6 +2307,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     setCurrentTaskName(project.currentTaskName);
     currentTaskNameRef.current = project.currentTaskName;
     setUnit(project.unit);
+    setCurrentProjectId(project.id);
+    setCurrentProjectName(project.name);
   }
 
   return (
@@ -2306,7 +2340,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </View>
         </View>
 
-        {/* Compact toolbar: New · Open · Save · Undo */}
+        {/* Compact toolbar: New · Open · Save · Save As · Undo */}
 <View style={styles.toolbar}>
   <TouchableOpacity
     style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -2326,10 +2360,18 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
 
   <TouchableOpacity
     style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-    onPress={() => setSaveVisible(true)}
+    onPress={handleSave}
   >
     <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
     <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save</Text>
+  </TouchableOpacity>
+
+  <TouchableOpacity
+    style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+    onPress={() => { setSaveName(currentProjectName ?? ""); setSaveAsVisible(true); }}
+  >
+    <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save As</Text>
   </TouchableOpacity>
 
   <TouchableOpacity
@@ -2681,6 +2723,37 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
 
 
         {/* Save Modal */}
+        {/* Save As modal */}
+        <Modal visible={saveAsVisible} transparent={true} animationType="fade" onRequestClose={() => setSaveAsVisible(false)}>
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSaveAsVisible(false)}>
+            <TouchableOpacity style={styles.modalBox} activeOpacity={1} onPress={() => {}}>
+              <Text style={styles.modalTitle}>SAVE AS PROJECT</Text>
+              <View style={styles.templateInputWrapper}>
+                <TextInput
+                  style={styles.templateInput}
+                  placeholder="Project name..."
+                  placeholderTextColor="#2A3F52"
+                  value={saveName}
+                  onChangeText={setSaveName}
+                  autoFocus={true}
+                  maxLength={40}
+                  onSubmitEditing={handleSaveAsProject}
+                />
+              </View>
+              <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsProject}>
+                <Text style={styles.saveOptionIcon}>📁</Text>
+                <View style={styles.saveOptionText}>
+                  <Text style={styles.saveOptionTitle}>Save Project</Text>
+                  <Text style={styles.saveOptionSub}>Saves dates and tasks — open and continue later</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveAsVisible(false); }}>
+                <Text style={styles.cancelTemplateBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+
         <Modal visible={saveVisible} transparent={true} animationType="fade" onRequestClose={() => setSaveVisible(false)}>
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSaveVisible(false)}>
             <View style={[styles.modalBox, { maxHeight: '85%' }]}>
