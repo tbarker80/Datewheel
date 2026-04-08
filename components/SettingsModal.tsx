@@ -13,6 +13,7 @@ export interface AppSettings {
   darkMode: boolean;
   hapticsEnabled: boolean;
   holidayCountry: string;
+  noWeekendEnd: boolean;
 }
 
 interface Props {
@@ -97,6 +98,22 @@ export default function SettingsModal({
               </View>
               <Text style={{ fontSize: 16, color: '#5A7A96' }}>›</Text>
             </TouchableOpacity>
+
+            {/* Scheduling Section */}
+            <Text style={styles.sectionTitle}>SCHEDULING</Text>
+
+            <View style={styles.row}>
+              <View style={styles.rowLeft}>
+                <Text style={styles.rowLabel}>No Weekend End Dates</Text>
+                <Text style={styles.rowSub}>Auto-shift task ends to Monday</Text>
+              </View>
+              <Switch
+                value={settings.noWeekendEnd ?? false}
+                onValueChange={(v) => update("noWeekendEnd", v)}
+                trackColor={{ false: "#2A3F52", true: "#2E7DBC" }}
+                thumbColor={(settings.noWeekendEnd ?? false) ? "#FFFFFF" : "#5A7A96"}
+              />
+            </View>
 
             {/* Holidays Section */}
             <Text style={styles.sectionTitle}>HOLIDAYS</Text>

@@ -102,26 +102,68 @@ export default function CalendarView({
     transform: [{ scale: contentScale.value }],
   }));
 
-  // ── Pinch-to-zoom ─────────────────────────────────────────────────────────
+  // ── Pinch-to-zoom + pan ───────────────────────────────────────────────────
   const [tappedLabel, setTappedLabel] = useState<{ name: string; color: string } | null>(null);
+  const [contentH, setContentH] = useState(0);
+  const [containerH, setContainerH] = useState(0);
 
   const zoom = useSharedValue(1.0);
-  const pinchStartZoom = useRef(1.0);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const pinchStartZoom = useSharedValue(1.0);
+  const panStartX = useSharedValue(0);
+  const panStartY = useSharedValue(0);
+  const contentHShared = useSharedValue(0);
+  const containerHShared = useSharedValue(0);
+
+  // Keep shared values in sync with state
+  useEffect(() => { contentHShared.value = contentH; }, [contentH]);
+  useEffect(() => { containerHShared.value = containerH; }, [containerH]);
+
+  const { width: SCREEN_W } = Dimensions.get('window');
+  const screenWShared = useSharedValue(SCREEN_W);
 
   const pinchGesture = Gesture.Pinch()
-    .runOnJS(true)
     .onStart(() => {
-      pinchStartZoom.current = zoom.value;
+      pinchStartZoom.value = zoom.value;
     })
     .onUpdate((e) => {
-      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom.current * e.scale));
+      'worklet';
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom.value * e.scale));
       zoom.value = next;
+      // Re-clamp X when zoom changes
+      const maxX = Math.max(0, (screenWShared.value * next - screenWShared.value) / 2);
+      translateX.value = Math.min(maxX, Math.max(-maxX, translateX.value));
+      // Re-clamp Y
+      const scaledH = contentHShared.value * next;
+      const maxY = Math.max(0, (scaledH - containerHShared.value) / 2);
+      translateY.value = Math.min(maxY, Math.max(-maxY, translateY.value));
     });
 
+  const panGesture = Gesture.Pan()
+    .onStart(() => {
+      'worklet';
+      panStartX.value = translateX.value;
+      panStartY.value = translateY.value;
+    })
+    .onUpdate((e) => {
+      'worklet';
+      const z = zoom.value;
+      const maxX = Math.max(0, (screenWShared.value * z - screenWShared.value) / 2);
+      const scaledH = contentHShared.value * z;
+      const maxY = Math.max(0, (scaledH - containerHShared.value) / 2);
+      translateX.value = Math.min(maxX, Math.max(-maxX, panStartX.value + e.translationX));
+      translateY.value = Math.min(maxY, Math.max(-maxY, panStartY.value + e.translationY));
+    });
+
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+
   const gridScaleStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: zoom.value }],
-    // Push origin to top so zooming feels anchored at the top
-    transformOrigin: 'top center',
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: zoom.value },
+    ],
   }));
 
   // ── Data ──────────────────────────────────────────────────────────────────
@@ -359,23 +401,24 @@ export default function CalendarView({
             ))}
           </ScrollView>
 
-          {/* Pinch-to-zoom grid + floating label overlay */}
-          <View style={{ flex: 1 }}>
-            <GestureDetector gesture={pinchGesture}>
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-              >
-                <Animated.View style={[styles.gridOuter, gridScaleStyle]}>
-                  <View style={styles.gridInner}>
-                    {monthRows.map((row, ri) => (
-                      <View key={ri} style={styles.gridRow}>
-                        {row.map(({ year: yr2, month: mo }) => renderMonth(yr2, mo))}
-                      </View>
-                    ))}
-                  </View>
-                </Animated.View>
-              </ScrollView>
+          {/* Pinch-to-zoom + pan grid + floating label overlay */}
+          <View
+            style={{ flex: 1, overflow: 'hidden' }}
+            onLayout={e => setContainerH(e.nativeEvent.layout.height)}
+          >
+            <GestureDetector gesture={composedGesture}>
+              <Animated.View style={[styles.gridOuter, gridScaleStyle]}>
+                <View
+                  style={styles.gridInner}
+                  onLayout={e => setContentH(e.nativeEvent.layout.height)}
+                >
+                  {monthRows.map((row, ri) => (
+                    <View key={ri} style={styles.gridRow}>
+                      {row.map(({ year: yr2, month: mo }) => renderMonth(yr2, mo))}
+                    </View>
+                  ))}
+                </View>
+              </Animated.View>
             </GestureDetector>
 
             {/* Floating task label — overlaid on calendar, dismisses on tap */}
@@ -481,11 +524,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     opacity: 0.7,
   },
-  scrollContent: {
-    paddingBottom: 32,
-  },
   gridOuter: {
-    // Extra height padding so scale-up doesn't clip content
     paddingBottom: 80,
   },
   gridInner: {

@@ -57,18 +57,8 @@ export interface Task {
   unit: string;
   notificationId?: string;
   reminderDays?: number;
-}
-export interface Task {
-  id: number;
-  name: string;
-  startDate: string;
-  endDate: string;
-  color: string;
-  duration: string;
-  unit: string;
-  notificationId?: string;
-  reminderDays?: number;
-  lagDays?: number;   // ← ADD: negative = overlap, positive = gap, undefined = flush
+  lagDays?: number;        // negative = overlap, positive = gap, undefined = flush
+  originalDuration?: string; // pre-snap duration, used when noWeekendEnd shifts the end date
 }
 
 export interface Milestone {

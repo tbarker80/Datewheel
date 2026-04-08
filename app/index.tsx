@@ -124,7 +124,17 @@ const DEFAULT_SETTINGS: AppSettings = {
   darkMode: true,
   hapticsEnabled: true,
   holidayCountry: "NONE",
+  noWeekendEnd: false,
 };
+
+// Advance Saturday → Monday, Sunday → Monday. Friday and earlier unchanged.
+function snapToWeekday(date: Date): Date {
+  const d = new Date(date);
+  const dow = d.getDay(); // 0=Sun, 6=Sat
+  if (dow === 6) d.setDate(d.getDate() + 2);
+  else if (dow === 0) d.setDate(d.getDate() + 1);
+  return d;
+}
 
 interface DatewheelFile {
   version: string;
@@ -243,7 +253,6 @@ export default function Index() {
   const [taskNameVisible, setTaskNameVisible] = useState(false);
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [openVisible, setOpenVisible] = useState(false);
-  const [saveVisible, setSaveVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(false);
   const [ganttVisible, setGanttVisible] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
@@ -259,11 +268,12 @@ export default function Index() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [currentTaskName, setCurrentTaskName] = useState("Current Task");
+  const [currentTaskName, setCurrentTaskName] = useState("Task 1");
   const [isDragging, setIsDragging] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [durationEditVisible, setDurationEditVisible] = useState(false);
   const [durationEditValue, setDurationEditValue] = useState('');
+  const [durationEditUnit, setDurationEditUnit] = useState<'Days' | 'Weeks' | 'Months'>('Days');
   const [renamingMilestone, setRenamingMilestone] = useState<Milestone | null>(null);
   const [tappedTaskId, setTappedTaskId] = useState<number | null>(null);
   const [dragDisplayDates, setDragDisplayDates] = useState<{
@@ -283,7 +293,7 @@ export default function Index() {
   const activeStartSnapshotRef = useRef<string>("");
   const activeEndSnapshotRef = useRef<string>("");
   const milestonesRef = useRef<Milestone[]>([]);
-  const currentTaskNameRef = useRef<string>("Current Task");
+  const currentTaskNameRef = useRef<string>("Task 1");
   const savedTappedTaskIdRef = useRef<number | null>(null);
   const stepLagCallbackRef = useRef<((lagDays: number) => void) | null>(null);
   const activeTaskReminderDaysRef = useRef<number | undefined>(undefined);
@@ -333,8 +343,8 @@ export default function Index() {
                 setMilestonesSync(file.milestones || []);
                 setStartDateSync(new Date(file.startDate));
                 setEndDateSync(new Date(file.endDate));
-                setCurrentTaskName(file.currentTaskName || 'Current Task');
-                currentTaskNameRef.current = file.currentTaskName || 'Current Task';
+                setCurrentTaskName(file.currentTaskName || 'Task 1');
+                currentTaskNameRef.current = file.currentTaskName || 'Task 1';
                 setUnit(file.unit || 'Days');
               },
             },
@@ -536,9 +546,16 @@ export default function Index() {
       const stepKey = `${tappedTask.id}-${field}`;
       const existingMode = stepModes[stepKey];
 
-      const updatedTasks = tasksRef.current.map(t =>
-        t.id !== tappedTask.id ? t : { ...t, [field === 'start' ? 'startDate' : 'endDate']: newDate.toISOString() }
-      );
+      const updatedTasks = tasksRef.current.map(t => {
+        if (t.id !== tappedTask.id) return t;
+        if (field === 'start') {
+          // Recalculate end from originalDuration if present, to preserve intent after weekend snap
+          const baseDays = t.originalDuration ? parseInt(t.originalDuration) : daysBetween(new Date(t.startDate), new Date(t.endDate));
+          const newEnd = new Date(newDate.getTime() + baseDays * 86400000);
+          return { ...t, startDate: newDate.toISOString(), endDate: newEnd.toISOString(), duration: String(baseDays), originalDuration: undefined };
+        }
+        return { ...t, endDate: newDate.toISOString(), originalDuration: undefined };
+      });
 
       if (existingMode === 'shift') {
         saveUndoSnapshot();
@@ -583,10 +600,26 @@ export default function Index() {
               onFree: () => {
                 stepLagCallbackRef.current = (confirmedLag: number) => {
                   saveUndoSnapshot();
-                  const withLag = updatedTasks.map((t, i) =>
-                    i === idx + 1 ? { ...t, lagDays: confirmedLag === 0 ? undefined : confirmedLag } : t
-                  );
-                  saveTasks(withLag);
+                  // Reposition next task so its start is exactly confirmedLag days after newDate
+                  const next = updatedTasks[idx + 1];
+                  const nextNewStart = new Date(newDate.getTime() + confirmedLag * 86400000);
+                  const nextDurationMs = new Date(next.endDate).getTime() - new Date(next.startDate).getTime();
+                  const nextNewEnd = new Date(nextNewStart.getTime() + nextDurationMs);
+                  const repositioned = updatedTasks.map((t, i) => {
+                    if (i === idx + 1) return { ...t, startDate: nextNewStart.toISOString(), endDate: nextNewEnd.toISOString(), lagDays: confirmedLag === 0 ? undefined : confirmedLag };
+                    return t;
+                  });
+                  // Cascade subsequent tasks by the same delta
+                  const cascadeDelta = nextNewStart.getTime() - new Date(next.startDate).getTime();
+                  for (let i = idx + 2; i < repositioned.length; i++) {
+                    if (repositioned[i].lagDays !== undefined) continue;
+                    repositioned[i] = { ...repositioned[i], startDate: new Date(new Date(repositioned[i].startDate).getTime() + cascadeDelta).toISOString(), endDate: new Date(new Date(repositioned[i].endDate).getTime() + cascadeDelta).toISOString() };
+                  }
+                  if (activeLagDays === undefined) {
+                    setStartDateSync(new Date(startDateRef.current.getTime() + cascadeDelta));
+                    setEndDateSync(new Date(endDateRef.current.getTime() + cascadeDelta));
+                  }
+                  saveTasks(repositioned);
                   stepLagCallbackRef.current = null;
                 };
                 setLagEditInitialOverride(lagDays);
@@ -649,10 +682,26 @@ export default function Index() {
               onFree: () => {
                 stepLagCallbackRef.current = (confirmedLag: number) => {
                   saveUndoSnapshot();
-                  const withLag = updatedTasks.map((t, i) =>
-                    i === idx ? { ...t, lagDays: confirmedLag === 0 ? undefined : confirmedLag } : t
-                  );
-                  saveTasks(withLag);
+                  // Reposition tapped task so its start is exactly confirmedLag days after prevTask.endDate
+                  const curr = updatedTasks[idx];
+                  const thisNewStart = new Date(new Date(prevTask.endDate).getTime() + confirmedLag * 86400000);
+                  const thisDurationMs = new Date(curr.endDate).getTime() - new Date(curr.startDate).getTime();
+                  const thisNewEnd = new Date(thisNewStart.getTime() + thisDurationMs);
+                  const repositioned = updatedTasks.map((t, i) => {
+                    if (i === idx) return { ...t, startDate: thisNewStart.toISOString(), endDate: thisNewEnd.toISOString(), lagDays: confirmedLag === 0 ? undefined : confirmedLag };
+                    return t;
+                  });
+                  // Cascade subsequent tasks by the same delta
+                  const cascadeDelta = thisNewStart.getTime() - new Date(curr.startDate).getTime();
+                  for (let i = idx + 1; i < repositioned.length; i++) {
+                    if (repositioned[i].lagDays !== undefined) continue;
+                    repositioned[i] = { ...repositioned[i], startDate: new Date(new Date(repositioned[i].startDate).getTime() + cascadeDelta).toISOString(), endDate: new Date(new Date(repositioned[i].endDate).getTime() + cascadeDelta).toISOString() };
+                  }
+                  if (activeLagDays === undefined) {
+                    setStartDateSync(new Date(startDateRef.current.getTime() + cascadeDelta));
+                    setEndDateSync(new Date(endDateRef.current.getTime() + cascadeDelta));
+                  }
+                  saveTasks(repositioned);
                   stepLagCallbackRef.current = null;
                 };
                 setLagEditInitialOverride(lagDays);
@@ -706,8 +755,12 @@ export default function Index() {
             onFree: () => {
               stepLagCallbackRef.current = (confirmedLag: number) => {
                 saveUndoSnapshot();
+                // Position active task exactly confirmedLag days after last stored task's end
+                const adjustedStart = new Date(new Date(lastTask!.endDate).getTime() + confirmedLag * 86400000);
+                const activeDurationMs = endDateRef.current.getTime() - startDateRef.current.getTime();
+                setStartDateSync(adjustedStart);
+                setEndDateSync(new Date(adjustedStart.getTime() + activeDurationMs));
                 setActiveLagDays(confirmedLag === 0 ? undefined : confirmedLag);
-                setStartDateSync(newStart);
                 stepLagCallbackRef.current = null;
               };
               setLagEditInitialOverride(lagDays);
@@ -931,13 +984,36 @@ export default function Index() {
   }
 
   function setEndDateSync(date: Date) {
-    setEndDate(date);
-    endDateRef.current = date;
+    const snapped = settings.noWeekendEnd ? snapToWeekday(date) : date;
+    setEndDate(snapped);
+    endDateRef.current = snapped;
+  }
+
+  // Snap end dates of stored tasks when noWeekendEnd is on.
+  // Stores originalDuration so that if the start date moves, the end recalculates
+  // from the intended duration rather than the snapped one.
+  function snapTaskEndDates(taskList: Task[]): Task[] {
+    if (!settings.noWeekendEnd) return taskList;
+    return taskList.map(t => {
+      const snapped = snapToWeekday(new Date(t.endDate));
+      if (snapped.toISOString() === t.endDate) {
+        // No snap needed — clear any stale originalDuration
+        const { originalDuration: _, ...rest } = t;
+        return rest;
+      }
+      return {
+        ...t,
+        originalDuration: t.originalDuration ?? t.duration, // preserve pre-snap duration
+        endDate: snapped.toISOString(),
+        duration: String(daysBetween(new Date(t.startDate), snapped)),
+      };
+    });
   }
 
   async function saveTasks(newTasks: Task[]) {
-    setTasksSync(newTasks);
-    await AsyncStorage.setItem("tasks", JSON.stringify(newTasks));
+    const snapped = snapTaskEndDates(newTasks);
+    setTasksSync(snapped);
+    await AsyncStorage.setItem("tasks", JSON.stringify(snapped));
   }
 
   function takeSnapshot() {
@@ -1125,9 +1201,8 @@ export default function Index() {
 
   const calcNewEnd = (start: Date): Date => {
     const newEnd = new Date(start);
-    switch (unit) {
+    switch (durationEditUnit) {
       case 'Days':
-      case 'Business Days':
         newEnd.setDate(newEnd.getDate() + num);
         break;
       case 'Weeks':
@@ -1167,6 +1242,7 @@ export default function Index() {
   savedTappedTaskIdRef.current = null;
   setDurationEditVisible(false);
   setDurationEditValue('');
+  setDurationEditUnit('Days');
 }
 
   function requirePro(action: () => void) {
@@ -1261,8 +1337,8 @@ export default function Index() {
               newEnd.setDate(newEnd.getDate() + 30);
               setStartDateSync(newStart);
               setEndDateSync(newEnd);
-              setCurrentTaskName('Current Task');
-              currentTaskNameRef.current = 'Current Task';
+              setCurrentTaskName('Task 1');
+              currentTaskNameRef.current = 'Task 1';
               return;
             }
             // Pop the last stored task and make it the new active task
@@ -1418,6 +1494,7 @@ export default function Index() {
     unit,
     notificationId,
     reminderDays: savedReminderDays,
+    lagDays: activeLagDays,
   };
 
   const updated = [...tasksRef.current, newTask];
@@ -1432,6 +1509,7 @@ export default function Index() {
   newActiveEnd.setDate(newActiveEnd.getDate() + (durationDays ?? 30));
   setStartDateSync(newActiveStart);
   setEndDateSync(newActiveEnd);
+  setActiveLagDays(undefined);
   setTaskNameVisible(false);
   setTappedTaskId(null);
 }
@@ -1578,13 +1656,17 @@ export default function Index() {
           setEndDateSync(future);
           setUnit("Days");
           setUnitIndex(0);
-          setCurrentTaskName("Current Task");
-          currentTaskNameRef.current = "Current Task";
+          setCurrentTaskName("Task 1");
+          currentTaskNameRef.current = "Task 1";
           setMilestonesSync([]);
           await saveTasks([]);
           await AsyncStorage.removeItem("milestones");
           setCurrentProjectId(null);
           setCurrentProjectName(null);
+          setActiveLagDays(undefined);
+          setStepModes({});
+          setTappedTaskId(null);
+          setDragDisplayDates(null);
         },
       },
     ]);
@@ -1611,9 +1693,12 @@ if (pickerTask) {
       const updated = tasksRef.current.map(t => {
         if (t.id !== pickerTaskId) return t;
         if (pickingField === "start") {
-          return { ...t, startDate: date.toISOString(), duration: String(daysBetween(date, new Date(t.endDate))) };
+          // If end was snapped, recalculate from original (pre-snap) duration to preserve intent
+          const baseDays = t.originalDuration ? parseInt(t.originalDuration) : daysBetween(new Date(t.startDate), new Date(t.endDate));
+          const newEnd = new Date(date.getTime() + baseDays * 86400000);
+          return { ...t, startDate: date.toISOString(), endDate: newEnd.toISOString(), duration: String(baseDays), originalDuration: undefined };
         } else {
-          return { ...t, endDate: date.toISOString(), duration: String(daysBetween(new Date(t.startDate), date)) };
+          return { ...t, endDate: date.toISOString(), duration: String(daysBetween(new Date(t.startDate), date)), originalDuration: undefined };
         }
       });
 
@@ -1833,7 +1918,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   async function handleSaveAsTemplate() {
     const name = saveName.trim() || `Template ${new Date().toLocaleDateString()}`;
     await saveTemplate(name, tasksRef.current, currentTaskNameRef.current, unit);
-    setSaveName(""); setSaveVisible(false);
+    setSaveName(""); setSaveAsVisible(false);
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert("Saved!", `"${name}" saved as a template.`);
   }
@@ -2462,6 +2547,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   ? calcDuration(new Date(editingTask.startDate), new Date(editingTask.endDate), unit, settings.holidayCountry)
                   : duration;
                 setDurationEditValue(editValue);
+                setDurationEditUnit('Days');
                 setDurationEditVisible(true);
               }}
               onEndDateChange={(date) => {
@@ -2695,26 +2781,34 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setDurationEditVisible(false)}>
             <TouchableOpacity style={styles.modalBox} activeOpacity={1} onPress={() => {}}>
               <Text style={styles.modalTitle}>SET DURATION</Text>
-              <View style={styles.templateInputWrapper}>
+              <View style={styles.durationEditRow}>
                 <TextInput
-                  style={styles.templateInput}
+                  style={styles.durationEditInput}
                   value={durationEditValue}
-                  onChangeText={setDurationEditValue}
-                  keyboardType="numeric"
+                  onChangeText={v => setDurationEditValue(v.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
                   autoFocus={true}
                   selectTextOnFocus={true}
                   maxLength={4}
-                  placeholder="Enter duration..."
+                  placeholder="30"
                   placeholderTextColor="#2A3F52"
                 />
+                <View style={styles.durationEditUnits}>
+                  {(['Days', 'Weeks', 'Months'] as const).map(u => (
+                    <TouchableOpacity
+                      key={u}
+                      style={[styles.unitBtn, durationEditUnit === u && styles.unitBtnActive]}
+                      onPress={() => setDurationEditUnit(u)}
+                    >
+                      <Text style={[styles.unitBtnText, durationEditUnit === u && styles.unitBtnTextActive]}>{u}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
-              <Text style={{ textAlign: 'center', color: '#5A7A96', fontSize: 12, marginBottom: 12 }}>
-                {unit} from {formatDate(startDate)}
-              </Text>
-              <TouchableOpacity style={styles.confirmBtn} onPress={handleDurationConfirm}>
+              <TouchableOpacity style={[styles.confirmBtn, { marginHorizontal: 0, marginTop: 8 }]} onPress={handleDurationConfirm}>
                 <Text style={styles.confirmBtnText}>Apply</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => setDurationEditVisible(false)}>
+              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setDurationEditVisible(false); setDurationEditValue(''); setDurationEditUnit('Days'); }}>
                 <Text style={styles.cancelTemplateBtnText}>Cancel</Text>
               </TouchableOpacity>
             </TouchableOpacity>
@@ -2722,12 +2816,11 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         </Modal>
 
 
-        {/* Save Modal */}
         {/* Save As modal */}
         <Modal visible={saveAsVisible} transparent={true} animationType="fade" onRequestClose={() => setSaveAsVisible(false)}>
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSaveAsVisible(false)}>
-            <TouchableOpacity style={styles.modalBox} activeOpacity={1} onPress={() => {}}>
-              <Text style={styles.modalTitle}>SAVE AS PROJECT</Text>
+            <View style={[styles.modalBox, { maxHeight: '85%' }]}>
+              <Text style={styles.modalTitle}>SAVE AS & EXPORT</Text>
               <View style={styles.templateInputWrapper}>
                 <TextInput
                   style={styles.templateInput}
@@ -2738,35 +2831,6 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   autoFocus={true}
                   maxLength={40}
                   onSubmitEditing={handleSaveAsProject}
-                />
-              </View>
-              <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsProject}>
-                <Text style={styles.saveOptionIcon}>📁</Text>
-                <View style={styles.saveOptionText}>
-                  <Text style={styles.saveOptionTitle}>Save Project</Text>
-                  <Text style={styles.saveOptionSub}>Saves dates and tasks — open and continue later</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveAsVisible(false); }}>
-                <Text style={styles.cancelTemplateBtnText}>Cancel</Text>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </Modal>
-
-        <Modal visible={saveVisible} transparent={true} animationType="fade" onRequestClose={() => setSaveVisible(false)}>
-          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSaveVisible(false)}>
-            <View style={[styles.modalBox, { maxHeight: '85%' }]}>
-              <Text style={styles.modalTitle}>SAVE & EXPORT</Text>
-              <View style={styles.templateInputWrapper}>
-                <TextInput
-                  style={styles.templateInput}
-                  placeholder="Project name..."
-                  placeholderTextColor="#2A3F52"
-                  value={saveName}
-                  onChangeText={setSaveName}
-                  autoFocus={true}
-                  maxLength={40}
                 />
               </View>
               <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -2784,35 +2848,35 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                     <Text style={styles.saveOptionSub}>Saves structure only — reuse for new projects</Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportCSV(); }}>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveAsVisible(false); handleExportCSV(); }}>
                   <Text style={styles.saveOptionIcon}>📤</Text>
                   <View style={styles.saveOptionText}>
                     <Text style={styles.saveOptionTitle}>Export as CSV</Text>
                     <Text style={styles.saveOptionSub}>Share with Excel, Sheets, MS Project & more</Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportXLSX(); }}>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveAsVisible(false); handleExportXLSX(); }}>
                   <Text style={styles.saveOptionIcon}>📊</Text>
                   <View style={styles.saveOptionText}>
                     <Text style={styles.saveOptionTitle}>Export as Excel</Text>
                     <Text style={styles.saveOptionSub}>Color-coded tasks with Gantt sheet</Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportICS(); }}>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveAsVisible(false); handleExportICS(); }}>
                   <Text style={styles.saveOptionIcon}>📅</Text>
                   <View style={styles.saveOptionText}>
                     <Text style={styles.saveOptionTitle}>Export as iCal</Text>
                     <Text style={styles.saveOptionSub}>Import into Google Calendar, Outlook & more</Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveVisible(false); handleExportPDF(); }}>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={() => { setSaveAsVisible(false); handleExportPDF(); }}>
                   <Text style={styles.saveOptionIcon}>📄</Text>
                   <View style={styles.saveOptionText}>
                     <Text style={styles.saveOptionTitle}>Export as PDF</Text>
                     <Text style={styles.saveOptionSub}>Professional report with task summary</Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.saveOptionBtn, { marginBottom: 8 }]} onPress={() => { setSaveVisible(false); handleShareProject(); }}>
+                <TouchableOpacity style={[styles.saveOptionBtn, { marginBottom: 8 }]} onPress={() => { setSaveAsVisible(false); handleShareProject(); }}>
                   <Text style={styles.saveOptionIcon}>🔗</Text>
                   <View style={styles.saveOptionText}>
                     <Text style={styles.saveOptionTitle}>Share Project File</Text>
@@ -2820,7 +2884,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   </View>
                 </TouchableOpacity>
               </ScrollView>
-              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveVisible(false); }}>
+              <TouchableOpacity style={styles.cancelTemplateBtn} onPress={() => { setSaveName(""); setSaveAsVisible(false); }}>
                 <Text style={styles.cancelTemplateBtnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
@@ -3410,4 +3474,11 @@ zoomResetText: {
   lockToggleText: { fontSize: 11, color: '#5A7A96', fontWeight: '500' },
   confirmBtn: { marginHorizontal: 12, marginBottom: 8, backgroundColor: '#2E7DBC', borderRadius: 12, padding: 14, alignItems: 'center' },
   confirmBtnText: { fontSize: 15, fontWeight: '600', color: '#FFFFFF' },
+  durationEditRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 16, paddingBottom: 8 },
+  durationEditInput: { width: 72, backgroundColor: '#0F1923', borderRadius: 10, padding: 10, fontSize: 22, fontWeight: '700', color: '#FFFFFF', borderWidth: 1, borderColor: '#2E7DBC', textAlign: 'center' },
+  durationEditUnits: { flex: 1, flexDirection: 'row', gap: 6 },
+  unitBtn: { flex: 1, paddingVertical: 9, borderRadius: 8, borderWidth: 1, borderColor: '#2A3F52', backgroundColor: '#0F1923', alignItems: 'center' },
+  unitBtnActive: { borderColor: '#2E7DBC', backgroundColor: '#1A3A5C' },
+  unitBtnText: { fontSize: 12, color: '#5A7A96', fontWeight: '500' },
+  unitBtnTextActive: { color: '#2E9BFF', fontWeight: '600' },
 });
