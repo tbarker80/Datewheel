@@ -2499,6 +2499,16 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </View>
         </View>
 
+        {/* Project name */}
+        <View style={styles.projectNameLabel}>
+          <Text style={[
+            styles.projectNameText,
+            !currentProjectName && styles.projectNameUnsaved,
+          ]}>
+            {currentProjectName ?? 'unsaved'}
+          </Text>
+        </View>
+
         {/* Wheel + 4 corner buttons */}
         <View style={styles.wheelContainer}>
           <Animated.View style={{ opacity: wheelFade }}>
@@ -3392,7 +3402,7 @@ zoomResetText: {
   proBadgeText: { fontSize: 9, fontWeight: "700", color: "#2E9BFF", letterSpacing: 1.5 },
   gearBtn: { padding: 8 },
   gearIcon: { fontSize: 24, color: "#5A7A96" },
-  dateRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 36 },
+  dateRow: { flexDirection: "row", width: "100%", gap: 8, marginBottom: 4 },
   dateField: { flex: 1, borderRadius: 10, flexDirection: "row", alignItems: "center", overflow: "hidden" },
   dateFieldInner: { flex: 1, alignItems: "center", paddingVertical: 5 },
   dateStepBtn: { paddingHorizontal: 10, alignSelf: "stretch", justifyContent: "center", alignItems: "center" },
@@ -3481,4 +3491,20 @@ zoomResetText: {
   unitBtnActive: { borderColor: '#2E7DBC', backgroundColor: '#1A3A5C' },
   unitBtnText: { fontSize: 12, color: '#5A7A96', fontWeight: '500' },
   unitBtnTextActive: { color: '#2E9BFF', fontWeight: '600' },
+  projectNameLabel: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+  },
+  projectNameText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#8AAFC4',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  projectNameUnsaved: {
+    color: '#3A5A72',
+    fontStyle: 'italic',
+  },
 });
