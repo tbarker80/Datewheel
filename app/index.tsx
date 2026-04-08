@@ -1672,13 +1672,13 @@ export default function Index() {
     ]);
   }
 
-  function openPicker(field: string) {
-  savedTappedTaskIdRef.current = tappedTaskId;  // ← ADD THIS
-  setPickingField(field);
-  setPickerVisible(true);
-}
+  function openPicker(field: string, captureTaskId = true) {
+    savedTappedTaskIdRef.current = captureTaskId ? tappedTaskId : null;
+    setPickingField(field);
+    setPickerVisible(true);
+  }
 
-  function handleConfirm(date: Date) {
+  async function handleConfirm(date: Date) {
     if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     // ── Editing a stored (tapped) task ──────────────────────────────────────
@@ -1824,12 +1824,21 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
       return;
     }
 
+    saveUndoSnapshot();
+
+    // ── Project start: always shift every task by the delta from first task ───
+    // Must come before the isLocked block — works the same locked or unlocked.
+    if (pickingField === "projectStart") {
+      await shiftTasksToNewStart(date);
+      setPickerVisible(false);
+      return;
+    }
+
     // ── Editing the active task ──────────────────────────────────────────────
     // If timeline is locked, shift everything together
     if (isLocked) {
       const anchor = pickingField === "start" ? startDateRef.current : endDateRef.current;
       const deltaMs = date.getTime() - anchor.getTime();
-      saveUndoSnapshot();
       saveTasks(tasksRef.current.map(t => ({
         ...t,
         startDate: new Date(new Date(t.startDate).getTime() + deltaMs).toISOString(),
@@ -1841,7 +1850,6 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
       return;
     }
 
-    saveUndoSnapshot();
     if (pickingField === "start") {
       if (tasksRef.current.length > 0) {
         const lastTask = tasksRef.current[tasksRef.current.length - 1];
@@ -1858,10 +1866,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               {
                 text: 'Shift Tasks',
                 onPress: () => {
-                  
                   shiftTasksToNewStart(date);
                   setStartDateSync(date);
-                  
                 },
               },
               {
@@ -2477,7 +2483,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', -1)}>
               <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("start")}>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("projectStart", false)}>
               <Text style={[styles.fieldLabel, { color: theme.muted }]}>PROJ START</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineStart)}</Text>
             </TouchableOpacity>
@@ -2489,7 +2495,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', -1)}>
               <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end")}>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end", false)}>
               <Text style={[styles.fieldLabel, { color: theme.muted }]}>PROJECT END</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineEnd)}</Text>
             </TouchableOpacity>
@@ -3065,7 +3071,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         <DateTimePickerModal
           isVisible={pickerVisible}
           mode="date"
-          date={pickingField === "start" ? activeTaskStart : activeTaskEnd}
+          date={pickingField === "projectStart" ? timelineStart : pickingField === "start" ? activeTaskStart : activeTaskEnd}
           onConfirm={handleConfirm}
           onCancel={() => setPickerVisible(false)}
         />
