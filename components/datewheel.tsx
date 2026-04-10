@@ -59,6 +59,7 @@ export interface Task {
   reminderDays?: number;
   lagDays?: number;        // negative = overlap, positive = gap, undefined = flush
   originalDuration?: string; // pre-snap duration, used when noWeekendEnd shifts the end date
+  percentComplete?: number;  // 0-100
 }
 
 export interface Milestone {
@@ -169,6 +170,7 @@ interface Props {
   onDragActive: (dragging: boolean) => void;
   onTaskTap: (taskId: number | null) => void;
   onScaleChange: (scale: number) => void;
+  activePercentComplete?: number;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -200,6 +202,7 @@ export default function DateWheel({
   onDragActive,
   onTaskTap,
   onScaleChange,
+  activePercentComplete = 0,
 }: Props) {
   const year = startDate.getFullYear();
   const monthStarts = getMonthStartDays(year);
@@ -561,26 +564,50 @@ export default function DateWheel({
             const color = exceededYear && task === tasks[tasks.length - 1] ? OVERLAP_COLOR : task.color;
             const isHighlighted = highlightedTaskId === task.id;
             const isDimmed = highlightedTaskId !== null && !isHighlighted;
+            // Grey progress arc: 1/3 width (strokeWidth 12) of the task arc width (36),
+            // centered on RING_RADIUS, showing completed fraction in grey
+            const pct = task.percentComplete ?? 0;
+            const spanDays = tEndDay - tStartDay;
+            const progressEndDay = pct > 0 ? tStartDay + Math.round(spanDays * pct / 100) : tStartDay;
+            const progressPath = pct > 0 && progressEndDay > tStartDay
+              ? buildArcPath(tStartDay, progressEndDay, tSameYear)
+              : '';
             return path ? (
               <React.Fragment key={task.id}>
                 {isHighlighted && <Path d={path} fill="none" stroke={color} strokeWidth={44} strokeOpacity={0.25}/>}
                 <Path d={path} fill="none" stroke={color}
                   strokeWidth={isHighlighted ? 40 : 36}
                   strokeOpacity={isDimmed ? 0.25 : isHighlighted ? 1.0 : 0.7}/>
+                {progressPath !== '' && (
+                  <Path d={progressPath} fill="none" stroke="#FFFFFF" strokeWidth={12} strokeOpacity={isDimmed ? 0.15 : 0.55}/>
+                )}
               </React.Fragment>
             ) : null;
           })}
 
           {/* Active arc */}
           {activeArcPath !== '' && (
-  <Path
-    d={activeArcPath}
-    fill="none"
-    stroke={exceededYear ? OVERLAP_COLOR : TASK_COLORS[tasks.length % TASK_COLORS.length]}
-    strokeWidth={highlightedTaskId === null ? 40 : 36}
-    strokeOpacity={highlightedTaskId === null ? 0.9 : 0.6}
-  />
-)}
+            <React.Fragment>
+              <Path
+                d={activeArcPath}
+                fill="none"
+                stroke={exceededYear ? OVERLAP_COLOR : TASK_COLORS[tasks.length % TASK_COLORS.length]}
+                strokeWidth={highlightedTaskId === null ? 40 : 36}
+                strokeOpacity={highlightedTaskId === null ? 0.9 : 0.6}
+              />
+              {activePercentComplete > 0 && (() => {
+                const spanDays = endDay - startDay;
+                const progressEndDay = startDay + Math.round(spanDays * activePercentComplete / 100);
+                const progressPath = progressEndDay > startDay
+                  ? buildArcPath(startDay, progressEndDay, sameYear)
+                  : '';
+                return progressPath !== '' ? (
+                  <Path d={progressPath} fill="none" stroke="#FFFFFF" strokeWidth={12}
+                    strokeOpacity={highlightedTaskId === null ? 0.55 : 0.15}/>
+                ) : null;
+              })()}
+            </React.Fragment>
+          )}
 
           {/* Ring borders */}
           <Circle cx={R} cy={R} r={RING_RADIUS + 18} fill="none" stroke="#2E7DBC" strokeWidth={1} strokeOpacity={0.4}/>

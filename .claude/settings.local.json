@@ -6,7 +6,9 @@
       "Bash(magick -version)",
       "Bash(inkscape --version)",
       "Bash(node -e \"require\\('@resvg/resvg-js'\\)\")",
-      "Bash(node scripts/generate-icon.js)"
+      "Bash(node scripts/generate-icon.js)",
+      "Bash(node -e \"require\\('@react-native-community/slider'\\)\")",
+      "Bash(npx tsc:*)"
     ]
   }
 }

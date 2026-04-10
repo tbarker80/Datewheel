@@ -14,6 +14,7 @@ import { useProStatus } from "@/components/ProContext";
 import ProModal from "@/components/ProModal";
 import ReminderModal from "@/components/ReminderModal";
 import SettingsModal, { AppSettings } from "@/components/SettingsModal";
+import TaskEditModal, { TaskEditValues } from "@/components/TaskEditModal";
 import TaskNameModal from "@/components/TaskNameModal";
 import TemplatesModal, { Project, saveTemplate, Template } from "@/components/TemplatesModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -96,6 +97,7 @@ function getDayName(date: Date) {
 }
 
 const UNITS = ["Days", "Weeks", "Months", "Business Days"];
+
 const MILESTONE_COLORS = ['#F0A500', '#EC4899', '#84CC16', '#2E9BFF', '#8B5CF6'];
 const MAX_UNDO_LEVELS = 25;
 
@@ -239,6 +241,11 @@ export default function Index() {
   const [startDate, setStartDate] = useState(today);
   const [lagEditVisible, setLagEditVisible] = useState(false);
   const [lagEditTaskIndex, setLagEditTaskIndex] = useState<number>(-1);
+  const [pctEditTaskId, setPctEditTaskId] = useState<number | null>(null);
+  const [pctEditValue, setPctEditValue] = useState(0);
+  const [taskEditId, setTaskEditId] = useState<number | null>(null);
+  const [taskActionTarget, setTaskActionTarget] = useState<{ id: number; name: string; color: string; isActive: boolean } | null>(null);
+  const [activeTaskPercentComplete, setActiveTaskPercentComplete] = useState(0);
   const [lagEditInitialOverride, setLagEditInitialOverride] = useState<number | undefined>(undefined);
   const [stepModes, setStepModes] = useState<Record<string, 'shift' | 'free'>>({});
   const [wheelScale, setWheelScale] = useState(1.0);
@@ -1017,6 +1024,41 @@ export default function Index() {
     await AsyncStorage.setItem("tasks", JSON.stringify(snapped));
   }
 
+  async function handleSavePercent(taskId: number, pct: number) {
+    const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+    if (taskId === -1) {
+      setActiveTaskPercentComplete(clamped);
+    } else {
+      const updated = tasksRef.current.map(t =>
+        t.id === taskId ? { ...t, percentComplete: clamped } : t
+      );
+      await saveTasks(updated);
+    }
+    setPctEditTaskId(null);
+  }
+
+  async function handleSaveTaskEdit(values: TaskEditValues) {
+    if (taskEditId === null) return;
+    const task = tasksRef.current.find(t => t.id === taskEditId);
+    if (!task) return;
+    // Handle reminder change
+    if (task.notificationId) await cancelReminder(task.notificationId);
+    let notificationId: string | undefined;
+    if (values.reminderDays !== null) {
+      const id = await scheduleReminder(values.name, new Date(task.endDate), values.reminderDays);
+      notificationId = id ?? undefined;
+    }
+    const updated = tasksRef.current.map(t =>
+      t.id === taskEditId
+        ? { ...t, name: values.name, percentComplete: values.percentComplete,
+            reminderDays: values.reminderDays ?? undefined, notificationId }
+        : t
+    );
+    await saveTasks(updated);
+    setTaskEditId(null);
+  }
+
+
   function takeSnapshot() {
     taskSnapshotRef.current = tasksRef.current.map(t => ({ ...t }));
     activeStartSnapshotRef.current = startDateRef.current.toISOString();
@@ -1494,7 +1536,9 @@ export default function Index() {
     notificationId,
     reminderDays: savedReminderDays,
     lagDays: activeLagDays,
+    percentComplete: activeTaskPercentComplete > 0 ? activeTaskPercentComplete : undefined,
   };
+  setActiveTaskPercentComplete(0);
 
   const updated = [...tasksRef.current, newTask];
   await saveTasks(updated);
@@ -1664,10 +1708,12 @@ export default function Index() {
           setCurrentProjectName(null);
           setIsReadOnly(false);
           setActiveLagDays(undefined);
+          setActiveTaskPercentComplete(0);
           setStepModes({});
           setTappedTaskId(null);
           setDragDisplayDates(null);
-          setTaskNameVisible(true);
+          setEditingTaskId(null);
+          setRenameModalVisible(true);
         },
       },
     ]);
@@ -2588,6 +2634,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     setCurrentProjectId(project.id);
     setCurrentProjectName(project.name);
     setIsReadOnly(project.readOnly ?? false);
+    setActiveTaskPercentComplete(0);
   }
 
   return (
@@ -2735,6 +2782,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               onTaskTap={handleTaskTap}
               isLocked={isLocked || isReadOnly}
               activeLagDays={activeLagDays}
+              activePercentComplete={activeTaskPercentComplete}
               onTimelineShift={handleTimelineShift}
               onBoundaryTap={(taskIndex) => {
                 const isLastStoredTask = taskIndex === tasksRef.current.length - 1;
@@ -3123,6 +3171,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               unit,
               isActive: true,
               listIndex: tasks.length,
+              percentComplete: activeTaskPercentComplete,
             },
           ].map((item, i, arr) => (
             <TouchableOpacity
@@ -3132,20 +3181,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   { backgroundColor: item.id === tappedTaskId ? theme.cardHighlight : theme.card },
 ]}
               onLongPress={() => {
-                if (item.isActive) {
-                  if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  Alert.alert(
-                    item.name,
-                    'What would you like to do?',
-                    [
-                      { text: 'Rename', onPress: handleRenameCurrentTask },
-                      { text: 'Delete', style: 'destructive', onPress: handleDeleteActiveTask },
-                      { text: 'Cancel', style: 'cancel' },
-                    ]
-                  );
-                } else {
-                  deleteTask(item.id);
-                }
+                if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                setTaskActionTarget({ id: item.id, name: item.name, color: item.color, isActive: !!item.isActive });
               }}
               delayLongPress={400}
             >
@@ -3159,9 +3196,20 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                 <Text style={[styles.taskItemDates, { color: theme.muted }]}>
                   {formatDate(new Date(item.startDate))} → {formatDate(new Date(item.endDate))}
                 </Text>
-                <Text style={[styles.taskItemDuration, { color: item.color }]}>
-                  {item.isActive ? duration : item.duration} {item.unit}
-                </Text>
+                <View style={styles.taskBottomRow}>
+                  <Text style={[styles.taskItemDuration, { color: item.color }]}>
+                    {item.isActive ? duration : item.duration} {item.unit}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.pctBarTouch}
+                    onPress={() => { setPctEditTaskId(item.id); setPctEditValue(item.percentComplete ?? 0); }}
+                  >
+                    <View style={styles.pctBarTrack}>
+                      <View style={[styles.pctBarFill, { width: `${item.percentComplete ?? 0}%` as any, backgroundColor: item.color }]} />
+                    </View>
+                    <Text style={[styles.pctBarLabel, { color: theme.muted }]}>{item.percentComplete ?? 0}%</Text>
+                  </TouchableOpacity>
+                </View>
                   {item.lagDays !== undefined && item.lagDays !== 0 && !item.isActive && (
                 <TouchableOpacity
                   onPress={() => {
@@ -3333,6 +3381,107 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   onClear={handleLagClear}
   onCancel={() => { setLagEditVisible(false); setLagEditTaskIndex(-1); setLagEditInitialOverride(undefined); stepLagCallbackRef.current = null; }}
 />
+      {/* % Complete editor modal */}
+      <Modal visible={pctEditTaskId !== null} transparent animationType="slide" onRequestClose={() => setPctEditTaskId(null)}>
+        <TouchableOpacity style={styles.pctModalOverlay} activeOpacity={1} onPress={() => setPctEditTaskId(null)}>
+          <TouchableOpacity style={styles.pctModalSheet} activeOpacity={1} onPress={() => {}}>
+            {(() => {
+              const task = pctEditTaskId === -1
+                ? { id: -1, name: currentTaskName, color: currentTaskColor }
+                : pctEditTaskId !== null ? tasks.find(t => t.id === pctEditTaskId) : null;
+              if (!task) return null;
+              return (
+                <>
+                  <Text style={styles.pctModalTitle}>{task.name}</Text>
+                  <Text style={styles.pctModalSub}>Set % complete</Text>
+
+                  {/* Big value + fine controls */}
+                  <View style={styles.pctValueRow}>
+                    <TouchableOpacity style={styles.pctFineBtn} onPress={() => setPctEditValue(v => Math.max(0, v - 1))}>
+                      <Text style={styles.pctFineBtnText}>−1</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.pctValueDisplay, { color: task.color }]}>{pctEditValue}%</Text>
+                    <TouchableOpacity style={styles.pctFineBtn} onPress={() => setPctEditValue(v => Math.min(100, v + 1))}>
+                      <Text style={styles.pctFineBtnText}>+1</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Progress bar preview */}
+                  <View style={styles.pctPreviewTrack}>
+                    <View style={[styles.pctPreviewFill, { width: `${pctEditValue}%` as any, backgroundColor: task.color }]} />
+                  </View>
+
+                  {/* Large step buttons: 0 10 20 … 100 */}
+                  <View style={styles.pctGridWrap}>
+                    {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(v => (
+                      <TouchableOpacity
+                        key={v}
+                        style={[styles.pctGridBtn, pctEditValue === v && { backgroundColor: task.color, borderColor: task.color }]}
+                        onPress={() => setPctEditValue(v)}
+                      >
+                        <Text style={[styles.pctGridBtnText, pctEditValue === v && { color: '#FFFFFF' }]}>{v}%</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <TouchableOpacity style={[styles.pctDoneBtn, { backgroundColor: task.color }]} onPress={() => handleSavePercent(pctEditTaskId!, pctEditValue)}>
+                    <Text style={styles.pctDoneBtnText}>Save</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Task long-press action sheet */}
+      <Modal visible={taskActionTarget !== null} transparent animationType="fade" onRequestClose={() => setTaskActionTarget(null)}>
+        <TouchableOpacity style={styles.taskActionOverlay} activeOpacity={1} onPress={() => setTaskActionTarget(null)}>
+          <View style={styles.taskActionSheet}>
+            {taskActionTarget && (
+              <>
+                <View style={[styles.taskActionHeader, { borderLeftColor: taskActionTarget.color }]}>
+                  <Text style={styles.taskActionTitle}>{taskActionTarget.name}</Text>
+                </View>
+                <TouchableOpacity style={styles.taskActionBtn} onPress={() => {
+                  setTaskActionTarget(null);
+                  if (taskActionTarget.isActive) handleRenameCurrentTask();
+                  else setTaskEditId(taskActionTarget.id);
+                }}>
+                  <Text style={styles.taskActionBtnIcon}>✎</Text>
+                  <Text style={styles.taskActionBtnText}>Edit</Text>
+                </TouchableOpacity>
+                <View style={styles.taskActionDivider} />
+                <TouchableOpacity style={styles.taskActionBtn} onPress={() => {
+                  setTaskActionTarget(null);
+                  if (taskActionTarget.isActive) handleDeleteActiveTask();
+                  else deleteTask(taskActionTarget.id);
+                }}>
+                  <Text style={[styles.taskActionBtnIcon, { color: '#EF4444' }]}>🗑</Text>
+                  <Text style={[styles.taskActionBtnText, { color: '#EF4444' }]}>Delete</Text>
+                </TouchableOpacity>
+                <View style={styles.taskActionDivider} />
+                <TouchableOpacity style={styles.taskActionBtn} onPress={() => setTaskActionTarget(null)}>
+                  <Text style={styles.taskActionBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <TaskEditModal
+        visible={taskEditId !== null}
+        taskNumber={taskEditId !== null ? tasks.findIndex(t => t.id === taskEditId) + 1 : 1}
+        initialName={taskEditId !== null ? tasks.find(t => t.id === taskEditId)?.name : undefined}
+        initialPercent={taskEditId !== null ? (tasks.find(t => t.id === taskEditId)?.percentComplete ?? 0) : 0}
+        initialReminderDays={taskEditId !== null ? tasks.find(t => t.id === taskEditId)?.reminderDays : undefined}
+        taskColor={taskEditId !== null ? (tasks.find(t => t.id === taskEditId)?.color ?? '#2E7DBC') : '#2E7DBC'}
+        isPro={isPro}
+        onSave={handleSaveTaskEdit}
+        onCancel={() => setTaskEditId(null)}
+      />
+
       <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 1} showDuration onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
       <TaskNameModal
         visible={renameModalVisible}
@@ -3722,4 +3871,36 @@ zoomResetText: {
     color: '#F0A500',
     letterSpacing: 1,
   },
+  taskBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  pctBarTouch: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pctBarTrack: { flex: 1, height: 5, backgroundColor: '#1C2B38', borderRadius: 3, overflow: 'hidden' },
+  pctBarFill: { height: '100%', borderRadius: 3 },
+  pctBarLabel: { fontSize: 11, fontWeight: '600', width: 30, textAlign: 'right' },
+  taskActionOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 32 },
+  taskActionSheet: { width: '100%', backgroundColor: '#1C2B38', borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: '#2A3F52' },
+  taskActionHeader: { padding: 18, borderBottomWidth: 0.5, borderBottomColor: '#2A3F52', borderLeftWidth: 4, paddingLeft: 16 },
+  taskActionTitle: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  taskActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 18 },
+  taskActionBtnIcon: { fontSize: 16, width: 22, textAlign: 'center', color: '#8AAFC4' },
+  taskActionBtnText: { fontSize: 16, color: '#FFFFFF', fontWeight: '500' },
+  taskActionDivider: { height: 0.5, backgroundColor: '#2A3F52', marginHorizontal: 16 },
+  pctValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  pctFineBtn: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#1C2B38', alignItems: 'center', justifyContent: 'center' },
+  pctFineBtnText: { fontSize: 16, fontWeight: '700', color: '#8AAFC4' },
+  pctPreviewTrack: { height: 10, backgroundColor: '#1C2B38', borderRadius: 5, overflow: 'hidden', marginBottom: 20 },
+  pctPreviewFill: { height: '100%', borderRadius: 5 },
+  pctGridWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 },
+  pctGridBtn: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#1C2B38', borderWidth: 1, borderColor: '#2A3F52', minWidth: 56, alignItems: 'center' },
+  pctGridBtnText: { fontSize: 14, fontWeight: '600', color: '#8AAFC4' },
+  pctModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  pctModalSheet: { backgroundColor: '#0F1923', borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1, borderColor: '#2E7DBC', padding: 24, paddingBottom: 40 },
+  pctModalTitle: { fontSize: 16, fontWeight: '700', color: '#FFFFFF', marginBottom: 4 },
+  pctModalSub: { fontSize: 12, color: '#5A7A96', marginBottom: 20 },
+  pctValueDisplay: { fontSize: 48, fontWeight: '700', color: '#FFFFFF', textAlign: 'center', marginBottom: 4 },
+  pctValueLabel: { fontSize: 11, color: '#5A7A96', textAlign: 'center', letterSpacing: 1.5, marginBottom: 20 },
+  pctDoneBtn: { backgroundColor: '#2E7DBC', borderRadius: 12, padding: 14, alignItems: 'center' },
+  pctDoneBtnText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  pctQuickRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  pctQuickBtn: { flex: 1, marginHorizontal: 3, backgroundColor: '#1C2B38', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
+  pctQuickText: { fontSize: 13, fontWeight: '600', color: '#8AAFC4' },
 });
