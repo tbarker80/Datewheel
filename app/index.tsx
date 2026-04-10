@@ -38,6 +38,9 @@ import {
   View
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
+import ReanimatedSwipeable, { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 import * as XLSX from 'xlsx';
@@ -228,6 +231,112 @@ async function saveProject(
     console.warn('Failed to save project:', e);
     return overwriteId ?? -1;
   }
+}
+
+// ── Swipeable action components (must be defined outside main component for hooks) ──
+
+function SwipeDeleteAction({ onDelete }: { onDelete: () => void }) {
+  return (
+    <View style={swipeStyles.rightAction}>
+      <TouchableOpacity style={swipeStyles.deleteAction} onPress={onDelete}>
+        <Text style={swipeStyles.actionIcon}>🗑</Text>
+        <Text style={swipeStyles.actionLabel}>Delete</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function SwipeEditProgressActions({ onEdit, onProgress }: { onEdit: () => void; onProgress: () => void }) {
+  const editTap = Gesture.Tap().runOnJS(true).onEnd(onEdit);
+  const progressTap = Gesture.Tap().runOnJS(true).onEnd(onProgress);
+  return (
+    <View style={swipeStyles.leftActions}>
+      <GestureDetector gesture={editTap}>
+        <View style={swipeStyles.editAction}>
+          <Text style={swipeStyles.actionIcon}>✏️</Text>
+          <Text style={swipeStyles.actionLabel}>Edit</Text>
+        </View>
+      </GestureDetector>
+      <GestureDetector gesture={progressTap}>
+        <View style={swipeStyles.progressAction}>
+          <Text style={swipeStyles.actionIcon}>📊</Text>
+          <Text style={swipeStyles.actionLabel}>Progress</Text>
+        </View>
+      </GestureDetector>
+    </View>
+  );
+}
+
+const swipeStyles = StyleSheet.create({
+  rightAction: { width: 80, alignSelf: 'stretch' },
+  leftActions: { width: 160, flexDirection: 'row', alignSelf: 'stretch' },
+  deleteAction: {
+    flex: 1,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    marginVertical: 3,
+    marginLeft: 2,
+    marginRight: 4,
+  },
+  editAction: {
+    flex: 1,
+    backgroundColor: '#2E7DBC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    marginVertical: 3,
+    marginLeft: 4,
+    marginRight: 2,
+  },
+  progressAction: {
+    flex: 1,
+    backgroundColor: '#34C759',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    marginVertical: 3,
+    marginLeft: 2,
+    marginRight: 4,
+  },
+  actionIcon: { fontSize: 18 },
+  actionLabel: { fontSize: 10, color: '#FFFFFF', fontWeight: '600', marginTop: 2 },
+});
+
+function SwipeableTaskRow({
+  children,
+  onDelete,
+  onEdit,
+  onProgress,
+}: {
+  children: React.ReactNode;
+  onDelete: () => void;
+  onEdit: () => void;
+  onProgress: () => void;
+}) {
+  const ref = useRef<SwipeableMethods>(null);
+  const close = () => ref.current?.close();
+
+  return (
+    <ReanimatedSwipeable
+      ref={ref}
+      friction={2}
+      overshootRight={false}
+      overshootLeft={false}
+      renderRightActions={() => (
+        <SwipeDeleteAction onDelete={() => { close(); onDelete(); }} />
+      )}
+      renderLeftActions={() => (
+        <SwipeEditProgressActions
+          onEdit={() => { close(); onEdit(); }}
+          onProgress={() => { close(); onProgress(); }}
+        />
+      )}
+    >
+      {children}
+    </ReanimatedSwipeable>
+  );
 }
 
 export default function Index() {
@@ -1058,6 +1167,8 @@ export default function Index() {
     setTaskEditId(null);
   }
 
+
+  // ── Swipeable task row refs ──────────────────────────────────────────────
 
   function takeSnapshot() {
     taskSnapshotRef.current = tasksRef.current.map(t => ({ ...t }));
@@ -3174,12 +3285,32 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               percentComplete: activeTaskPercentComplete,
             },
           ].map((item, i, arr) => (
-            <TouchableOpacity
+            <SwipeableTaskRow
               key={item.id}
+              onDelete={() => {
+                if (item.isActive) {
+                  Alert.alert('Delete', 'Remove the active task?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: () => handleDeleteActiveTask() },
+                  ]);
+                } else {
+                  deleteTask(item.id);
+                }
+              }}
+              onEdit={() => {
+                if (item.isActive) handleRenameCurrentTask();
+                else setTaskEditId(item.id);
+              }}
+              onProgress={() => {
+                setPctEditTaskId(item.id);
+                setPctEditValue(item.percentComplete ?? 0);
+              }}
+            >
+            <TouchableOpacity
               style={[
-  styles.taskItem,
-  { backgroundColor: item.id === tappedTaskId ? theme.cardHighlight : theme.card },
-]}
+                styles.taskItem,
+                { backgroundColor: item.id === tappedTaskId ? theme.cardHighlight : theme.card },
+              ]}
               onLongPress={() => {
                 if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 setTaskActionTarget({ id: item.id, name: item.name, color: item.color, isActive: !!item.isActive });
@@ -3249,6 +3380,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                 </View>
               </View>
             </TouchableOpacity>
+            </SwipeableTaskRow>
           ))}
 
           {/* Milestones */}
