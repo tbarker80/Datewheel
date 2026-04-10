@@ -1250,11 +1250,7 @@ export default function Index() {
   }
 
   function handleAddTask() {
-    if (tasksRef.current.length === 0) {
-      setTaskNameVisible(true);
-    } else {
-      requirePro(() => setTaskNameVisible(true));
-    }
+    setTaskNameVisible(true);
   }
 
   function handleRenameCurrentTask() {
@@ -1263,15 +1259,17 @@ export default function Index() {
   }
 
   function handleBellPress(item: { id: number; isActive?: boolean }) {
-    if (item.isActive) {
-      setReminderEditTarget({ kind: 'activeTask' });
-    } else {
-      setReminderEditTarget({ kind: 'task', id: item.id });
-    }
+    requirePro(() => {
+      if (item.isActive) {
+        setReminderEditTarget({ kind: 'activeTask' });
+      } else {
+        setReminderEditTarget({ kind: 'task', id: item.id });
+      }
+    });
   }
 
   function handleMilestoneBellPress(id: number) {
-    setReminderEditTarget({ kind: 'milestone', id });
+    requirePro(() => setReminderEditTarget({ kind: 'milestone', id }));
   }
 
   async function confirmSetReminder(days: number | null) {
@@ -2256,9 +2254,11 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
       ...tasksRef.current,
       { id: -1, name: currentTaskNameRef.current, startDate: startDateRef.current.toISOString(), endDate: endDateRef.current.toISOString(), color: currentTaskColor, duration, unit },
     ];
-    const SVG_SIZE = 400;
+
+    // ── SVG wheel (light-themed for print) ────────────────────────────────────
+    const SVG_SIZE = 380;
     const R = SVG_SIZE / 2;
-    const RING_R = R - 24;
+    const RING_R = R - 28;
     const TOTAL_DAYS = 365;
     const MONTHS = [
       { name: 'Jan', days: 31 }, { name: 'Feb', days: 28 }, { name: 'Mar', days: 31 },
@@ -2266,8 +2266,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
       { name: 'Jul', days: 31 }, { name: 'Aug', days: 31 }, { name: 'Sep', days: 30 },
       { name: 'Oct', days: 31 }, { name: 'Nov', days: 30 }, { name: 'Dec', days: 31 },
     ];
-    function dayToAngle(day: number) { return (day / TOTAL_DAYS) * 360 - 90; }
-    function angleToXY(deg: number, radius: number) {
+    function pdfDayToAngle(day: number) { return (day / TOTAL_DAYS) * 360 - 90; }
+    function pdfAngleToXY(deg: number, radius: number) {
       const rad = (deg * Math.PI) / 180;
       return { x: R + radius * Math.cos(rad), y: R + radius * Math.sin(rad) };
     }
@@ -2278,66 +2278,238 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     function buildArc(startDay: number, endDay: number): string {
       const spanDays = endDay - startDay;
       if (spanDays <= 0 || spanDays >= TOTAL_DAYS) return '';
-      const sa = dayToAngle(startDay);
-      const ea = dayToAngle(endDay);
-      const s = angleToXY(sa, RING_R);
-      const e = angleToXY(ea, RING_R);
+      const sa = pdfDayToAngle(startDay);
+      const ea = pdfDayToAngle(endDay);
+      const s = pdfAngleToXY(sa, RING_R);
+      const e = pdfAngleToXY(ea, RING_R);
       const large = ((spanDays / TOTAL_DAYS) * 360) > 180 ? 1 : 0;
       return `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} A ${RING_R} ${RING_R} 0 ${large} 1 ${e.x.toFixed(1)} ${e.y.toFixed(1)}`;
     }
+
     let monthStarts: number[] = [];
     let running = 0;
     MONTHS.forEach(m => { monthStarts.push(running); running += m.days; });
+
+    // Track ring (light gray on white)
+    const trackRing = `<circle cx="${R}" cy="${R}" r="${RING_R}" fill="none" stroke="#E2EBF3" stroke-width="30"/>`;
+    // Outer/inner guide rings
+    const guideRings = `<circle cx="${R}" cy="${R}" r="${RING_R + 15}" fill="none" stroke="#CBD8E5" stroke-width="0.8"/><circle cx="${R}" cy="${R}" r="${RING_R - 15}" fill="none" stroke="#CBD8E5" stroke-width="0.8"/>`;
+
     const monthDividers = monthStarts.map(dayStart => {
-      const angle = dayToAngle(dayStart);
-      const inner = angleToXY(angle, RING_R - 14);
-      const outer = angleToXY(angle, RING_R + 14);
-      return `<line x1="${inner.x.toFixed(1)}" y1="${inner.y.toFixed(1)}" x2="${outer.x.toFixed(1)}" y2="${outer.y.toFixed(1)}" stroke="#2E7DBC" stroke-width="0.5" stroke-opacity="0.5"/>`;
+      const angle = pdfDayToAngle(dayStart);
+      const inner = pdfAngleToXY(angle, RING_R - 15);
+      const outer = pdfAngleToXY(angle, RING_R + 15);
+      return `<line x1="${inner.x.toFixed(1)}" y1="${inner.y.toFixed(1)}" x2="${outer.x.toFixed(1)}" y2="${outer.y.toFixed(1)}" stroke="#B0C4D8" stroke-width="0.8"/>`;
     }).join('');
+
     const monthLabels = MONTHS.map((month, i) => {
       const midDay = monthStarts[i] + month.days / 2;
-      const angle = dayToAngle(midDay);
-      const pos = angleToXY(angle, RING_R - 38);
+      const angle = pdfDayToAngle(midDay);
+      const pos = pdfAngleToXY(angle, RING_R - 42);
       const rotation = angle + 90;
-      return `<text x="${pos.x.toFixed(1)}" y="${pos.y.toFixed(1)}" font-size="9" font-weight="600" fill="#8AAFC4" text-anchor="middle" dominant-baseline="middle" transform="rotate(${rotation.toFixed(1)}, ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})">${month.name}</text>`;
+      return `<text x="${pos.x.toFixed(1)}" y="${pos.y.toFixed(1)}" font-size="9" font-weight="700" fill="#6A90B0" text-anchor="middle" dominant-baseline="middle" transform="rotate(${rotation.toFixed(1)}, ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})">${month.name}</text>`;
     }).join('');
+
     const taskArcs = allTasks.map(task => {
       const path = buildArc(getDOY(new Date(task.startDate)), getDOY(new Date(task.endDate)));
       if (!path) return '';
-      return `<path d="${path}" fill="none" stroke="${task.color}" stroke-width="28" stroke-opacity="${task.id === -1 ? '0.85' : '0.7'}" stroke-linecap="butt"/>`;
+      return `<path d="${path}" fill="none" stroke="${task.color}" stroke-width="30" stroke-opacity="${task.id === -1 ? '0.9' : '0.8'}" stroke-linecap="butt"/>`;
     }).join('');
+
     const boundaryDots = tasksRef.current.map(task => {
-      const angle = dayToAngle(getDOY(new Date(task.endDate)));
-      const pos = angleToXY(angle, RING_R);
-      return `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="6" fill="${task.color}" stroke="white" stroke-width="1.5" stroke-opacity="0.6"/>`;
+      const pos = pdfAngleToXY(pdfDayToAngle(getDOY(new Date(task.endDate))), RING_R);
+      return `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="6" fill="${task.color}" stroke="white" stroke-width="2"/>`;
     }).join('');
-    const startPos = angleToXY(dayToAngle(getDOY(startDateRef.current)), RING_R);
-    const startDot = `<circle cx="${startPos.x.toFixed(1)}" cy="${startPos.y.toFixed(1)}" r="8" fill="#2E9BFF" stroke="white" stroke-width="1.5" stroke-opacity="0.6"/>`;
-    const endPos = angleToXY(dayToAngle(getDOY(endDateRef.current)), RING_R);
-    const endDot = `<circle cx="${endPos.x.toFixed(1)}" cy="${endPos.y.toFixed(1)}" r="10" fill="#F0A500" fill-opacity="0.9" stroke="white" stroke-width="1.5" stroke-opacity="0.6"/>`;
-    const todayAngle = dayToAngle(getDOY(new Date()));
-    const todayInner = angleToXY(todayAngle, RING_R - 14);
-    const todayOuter = angleToXY(todayAngle, RING_R + 14);
-    const todayDotPos = angleToXY(todayAngle, RING_R);
-    const todayMarker = `<line x1="${todayInner.x.toFixed(1)}" y1="${todayInner.y.toFixed(1)}" x2="${todayOuter.x.toFixed(1)}" y2="${todayOuter.y.toFixed(1)}" stroke="#F0A500" stroke-width="2" stroke-opacity="0.9" stroke-linecap="round"/><circle cx="${todayDotPos.x.toFixed(1)}" cy="${todayDotPos.y.toFixed(1)}" r="3" fill="#F0A500" fill-opacity="0.9"/>`;
+
+    const startPos = pdfAngleToXY(pdfDayToAngle(getDOY(startDateRef.current)), RING_R);
+    const startDot = `<circle cx="${startPos.x.toFixed(1)}" cy="${startPos.y.toFixed(1)}" r="8" fill="#2E9BFF" stroke="white" stroke-width="2"/>`;
+
+    const endPos = pdfAngleToXY(pdfDayToAngle(getDOY(endDateRef.current)), RING_R);
+    const endDot = `<circle cx="${endPos.x.toFixed(1)}" cy="${endPos.y.toFixed(1)}" r="10" fill="#F0A500" stroke="white" stroke-width="2"/>`;
+
+    const todayAngle = pdfDayToAngle(getDOY(new Date()));
+    const todayInner = pdfAngleToXY(todayAngle, RING_R - 15);
+    const todayOuter = pdfAngleToXY(todayAngle, RING_R + 15);
+    const todayMarker = `<line x1="${todayInner.x.toFixed(1)}" y1="${todayInner.y.toFixed(1)}" x2="${todayOuter.x.toFixed(1)}" y2="${todayOuter.y.toFixed(1)}" stroke="#F0A500" stroke-width="2.5" stroke-linecap="round"/>`;
+
     const milestoneSVG = milestonesRef.current.map(m => {
-      const angle = dayToAngle(getDOY(new Date(m.date)));
-      const pos = angleToXY(angle, RING_R - 18);
-      const size = 5;
-      return `<polygon points="${pos.x},${(pos.y - size).toFixed(1)} ${(pos.x + size).toFixed(1)},${pos.y} ${pos.x},${(pos.y + size).toFixed(1)} ${(pos.x - size).toFixed(1)},${pos.y}" fill="${m.color}" stroke="white" stroke-width="1"/>`;
+      const pos = pdfAngleToXY(pdfDayToAngle(getDOY(new Date(m.date))), RING_R);
+      const s = 6;
+      return `<polygon points="${pos.x},${(pos.y - s).toFixed(1)} ${(pos.x + s).toFixed(1)},${pos.y} ${pos.x},${(pos.y + s).toFixed(1)} ${(pos.x - s).toFixed(1)},${pos.y}" fill="${m.color}" stroke="white" stroke-width="1.5"/>`;
     }).join('');
-    const hubRadius = R - 72;
-    const centerText = `<circle cx="${R}" cy="${R}" r="${hubRadius}" fill="#0F1923" stroke="#2E7DBC" stroke-width="1.5"/><text x="${R}" y="${R - 18}" font-size="32" font-weight="700" fill="white" text-anchor="middle" dominant-baseline="middle">${totalDuration || duration}</text><text x="${R}" y="${R + 14}" font-size="11" font-weight="600" fill="#2E9BFF" text-anchor="middle" dominant-baseline="middle" letter-spacing="2">${unit.toUpperCase()}</text>${totalDuration ? `<text x="${R}" y="${R + 36}" font-size="10" fill="#5A7A96" text-anchor="middle" dominant-baseline="middle">TOTAL</text>` : ''}`;
-    const wheelSVG = `<svg width="${SVG_SIZE}" height="${SVG_SIZE}" xmlns="http://www.w3.org/2000/svg" style="background:#0F1923; border-radius:50%;"><circle cx="${R}" cy="${R}" r="${RING_R}" fill="none" stroke="#1C2B38" stroke-width="28"/>${taskArcs}<circle cx="${R}" cy="${R}" r="${RING_R + 14}" fill="none" stroke="#2E7DBC" stroke-width="0.5" stroke-opacity="0.4"/><circle cx="${R}" cy="${R}" r="${RING_R - 14}" fill="none" stroke="#2E7DBC" stroke-width="0.5" stroke-opacity="0.4"/>${monthDividers}${monthLabels}${todayMarker}${centerText}${boundaryDots}${milestoneSVG}${startDot}${endDot}</svg>`;
-    const taskRows = allTasks.map((task, i) => `<tr style="background: ${i % 2 === 0 ? '#f8fafc' : '#ffffff'}"><td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0;"><div style="display: flex; align-items: center; gap: 8px;"><div style="width: 12px; height: 12px; border-radius: 50%; background: ${task.color}; flex-shrink: 0;"></div><span style="font-weight: 600; color: #0d1b2a;">${task.name}${task.id === -1 ? ' <span style="background:#1a6fbf;color:white;font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">ACTIVE</span>' : ''}</span></div></td><td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${formatDate(new Date(task.startDate))}</td><td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${formatDate(new Date(task.endDate))}</td><td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: ${task.color};">${task.duration} ${task.unit}</td></tr>`).join('');
-    const milestoneRows = milestonesRef.current.length > 0 ? `<h2 style="font-size: 14px; font-weight: 700; color: #5a7a96; letter-spacing: 2px; margin: 32px 0 12px 0; text-transform: uppercase;">Milestones</h2><table style="width: 100%; border-collapse: collapse;"><thead><tr style="background: #1a6fbf;"><th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px;">MILESTONE</th><th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px;">DATE</th><th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px;">DAY</th></tr></thead><tbody>${milestonesRef.current.map((m, i) => `<tr style="background: ${i % 2 === 0 ? '#f8fafc' : '#ffffff'}"><td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0;"><span style="font-weight: 600; color: #0d1b2a;">◆ ${m.name}</span></td><td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${formatDate(new Date(m.date))}</td><td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #5a7a96;">${getDayName(new Date(m.date))}</td></tr>`).join('')}</tbody></table>` : '';
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>* { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff; color: #0d1b2a; padding: 40px; }</style></head><body><div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #e2e8f0;"><div><div style="font-size: 28px; font-weight: 800; letter-spacing: 2px; margin-bottom: 4px;"><span style="color: #0d1b2a;">DATE</span><span style="color: #1a6fbf;">WHEEL</span></div><div style="font-size: 13px; color: #5a7a96;">Project Timeline Report</div></div><div style="text-align: right;"><div style="font-size: 12px; color: #5a7a96;">Generated ${formatDate(new Date())}</div></div></div><div style="display: flex; gap: 32px; align-items: center; margin-bottom: 32px;"><div style="flex-shrink: 0;">${wheelSVG}</div><div style="flex: 1;"><div style="margin-bottom: 16px; background: #f0f7ff; border-radius: 12px; padding: 16px; border-left: 4px solid #1a6fbf;"><div style="font-size: 10px; font-weight: 700; color: #5a7a96; letter-spacing: 1.5px; margin-bottom: 6px;">TIMELINE START</div><div style="font-size: 16px; font-weight: 700; color: #0d1b2a;">${formatDate(timelineStart)}</div><div style="font-size: 12px; color: #5a7a96;">${getDayName(timelineStart)}</div></div><div style="margin-bottom: 16px; background: #f0f7ff; border-radius: 12px; padding: 16px; border-left: 4px solid #1a6fbf;"><div style="font-size: 10px; font-weight: 700; color: #5a7a96; letter-spacing: 1.5px; margin-bottom: 6px;">TIMELINE END</div><div style="font-size: 16px; font-weight: 700; color: #0d1b2a;">${formatDate(timelineEnd)}</div><div style="font-size: 12px; color: #5a7a96;">${getDayName(timelineEnd)}</div></div><div style="background: #f0f7ff; border-radius: 12px; padding: 16px; border-left: 4px solid #1a6fbf;"><div style="font-size: 10px; font-weight: 700; color: #5a7a96; letter-spacing: 1.5px; margin-bottom: 6px;">TOTAL DURATION</div><div style="font-size: 16px; font-weight: 700; color: #1a6fbf;">${totalDuration || duration} ${unit}</div><div style="font-size: 12px; color: #5a7a96;">${allTasks.length} tasks${milestonesRef.current.length > 0 ? ` · ${milestonesRef.current.length} milestones` : ''}</div></div></div></div><h2 style="font-size: 14px; font-weight: 700; color: #5a7a96; letter-spacing: 2px; margin-bottom: 12px; text-transform: uppercase;">Project Tasks</h2><table style="width: 100%; border-collapse: collapse;"><thead><tr style="background: #1a6fbf;"><th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px;">TASK</th><th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px;">START</th><th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px;">END</th><th style="padding: 10px 14px; text-align: left; color: white; font-size: 11px;">DURATION</th></tr></thead><tbody>${taskRows}</tbody></table>${milestoneRows}<div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between;"><div style="font-size: 11px; color: #b0c8e0;">Created with Date Wheel</div><div style="font-size: 11px; color: #b0c8e0;">${formatDate(new Date())}</div></div></body></html>`;
+
+    // Hub: white with light border
+    const hubRadius = R - 76;
+    const hubCircle = `<circle cx="${R}" cy="${R}" r="${hubRadius}" fill="white" stroke="#CBD8E5" stroke-width="1.5"/>`;
+    const hubText = `<text x="${R}" y="${R - 14}" font-size="30" font-weight="800" fill="#0D1B2A" text-anchor="middle" dominant-baseline="middle">${totalDuration || duration}</text><text x="${R}" y="${R + 14}" font-size="10" font-weight="700" fill="#1A6FBF" text-anchor="middle" dominant-baseline="middle" letter-spacing="2">${unit.toUpperCase()}</text>${totalDuration ? `<text x="${R}" y="${R + 32}" font-size="9" fill="#8AAFC4" text-anchor="middle" dominant-baseline="middle">TOTAL</text>` : ''}`;
+
+    const wheelSVG = `<svg width="${SVG_SIZE}" height="${SVG_SIZE}" xmlns="http://www.w3.org/2000/svg">${trackRing}${taskArcs}${guideRings}${monthDividers}${monthLabels}${todayMarker}${hubCircle}${hubText}${boundaryDots}${milestoneSVG}${startDot}${endDot}</svg>`;
+
+    // ── Legend ────────────────────────────────────────────────────────────────
+    const legendItems = allTasks.map(t =>
+      `<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">
+        <div style="width:11px;height:11px;border-radius:50%;background:${t.color};flex-shrink:0;"></div>
+        <span style="font-size:11px;color:#2C4A60;font-weight:600;">${t.name}${t.id === -1 ? ' <span style="font-size:9px;color:#1A6FBF;">(active)</span>' : ''}</span>
+      </div>`
+    ).join('');
+    const milestoneLegend = milestonesRef.current.map(m =>
+      `<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">
+        <div style="width:11px;height:11px;background:${m.color};transform:rotate(45deg);flex-shrink:0;"></div>
+        <span style="font-size:11px;color:#2C4A60;font-weight:600;">◆ ${m.name}</span>
+      </div>`
+    ).join('');
+
+    // ── Task table rows ───────────────────────────────────────────────────────
+    const taskRows = allTasks.map((task, i) => {
+      const durationDays = daysBetween(new Date(task.startDate), new Date(task.endDate));
+      const isActive = task.id === -1;
+      return `<tr style="background:${i % 2 === 0 ? '#F7FAFD' : '#FFFFFF'};">
+        <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;">
+          <div style="display:flex;align-items:center;gap:9px;">
+            <div style="width:10px;height:10px;border-radius:50%;background:${task.color};flex-shrink:0;"></div>
+            <span style="font-weight:700;color:#0D1B2A;font-size:13px;">${task.name}</span>
+            ${isActive ? '<span style="background:#E8F0FB;color:#1A6FBF;font-size:9px;padding:2px 7px;border-radius:4px;font-weight:700;margin-left:4px;">ACTIVE</span>' : ''}
+          </div>
+        </td>
+        <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;color:#3A6080;font-size:13px;">${formatDate(new Date(task.startDate))}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;color:#3A6080;font-size:13px;">${formatDate(new Date(task.endDate))}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;font-size:13px;font-weight:700;color:${task.color};">${task.duration} ${task.unit}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;color:#6A90B0;font-size:12px;">${durationDays} days</td>
+      </tr>`;
+    }).join('');
+
+    const milestoneRows = milestonesRef.current.length > 0
+      ? `<div style="margin-top:36px;">
+          <div style="font-size:11px;font-weight:700;color:#6A90B0;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;">Milestones</div>
+          <table style="width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+            <thead>
+              <tr style="background:#1A6FBF;">
+                <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;">MILESTONE</th>
+                <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;">DATE</th>
+                <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;">DAY OF WEEK</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${milestonesRef.current.map((m, i) =>
+                `<tr style="background:${i % 2 === 0 ? '#F7FAFD' : '#FFFFFF'};">
+                  <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;">
+                    <div style="display:flex;align-items:center;gap:9px;">
+                      <div style="width:9px;height:9px;background:${m.color};transform:rotate(45deg);flex-shrink:0;"></div>
+                      <span style="font-weight:700;color:#0D1B2A;font-size:13px;">${m.name}</span>
+                    </div>
+                  </td>
+                  <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;color:#3A6080;font-size:13px;">${formatDate(new Date(m.date))}</td>
+                  <td style="padding:10px 14px;border-bottom:1px solid #E8EEF4;color:#3A6080;font-size:13px;">${getDayName(new Date(m.date))}</td>
+                </tr>`
+              ).join('')}
+            </tbody>
+          </table>
+        </div>`
+      : '';
+
+    const projectName = currentProjectName ?? 'Untitled Project';
+    const generatedDate = formatDate(new Date());
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; background:#FFFFFF; color:#0D1B2A; }
+    @page { margin: 36px 40px; }
+  </style>
+</head>
+<body style="padding:40px;">
+
+  <!-- Header bar -->
+  <div style="background:#0D1B2A;border-radius:12px;padding:24px 28px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <div style="font-size:11px;font-weight:700;color:#6A90B0;letter-spacing:2px;margin-bottom:6px;text-transform:uppercase;">Project Timeline Report</div>
+      <div style="font-size:26px;font-weight:800;color:#FFFFFF;letter-spacing:-0.5px;">${projectName}</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:10px;color:#6A90B0;letter-spacing:1px;margin-bottom:4px;">GENERATED</div>
+      <div style="font-size:13px;font-weight:600;color:#8AAFC4;">${generatedDate}</div>
+      <div style="margin-top:10px;font-size:13px;font-weight:700;color:#2E9BFF;letter-spacing:1px;">DATE<span style="color:#F0A500;">WHEEL</span></div>
+    </div>
+  </div>
+
+  <!-- Wheel + summary side by side -->
+  <div style="display:flex;gap:28px;align-items:flex-start;margin-bottom:32px;">
+
+    <!-- Wheel -->
+    <div style="flex-shrink:0;background:#F4F8FB;border-radius:16px;padding:16px;border:1px solid #E2EBF3;">
+      ${wheelSVG}
+      <!-- Legend below wheel -->
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid #E2EBF3;">
+        <div style="font-size:9px;font-weight:700;color:#6A90B0;letter-spacing:1.5px;margin-bottom:8px;text-transform:uppercase;">Legend</div>
+        ${legendItems}
+        ${milestoneLegend}
+        <div style="display:flex;align-items:center;gap:7px;margin-top:6px;">
+          <div style="width:20px;height:2px;background:#F0A500;"></div>
+          <span style="font-size:11px;color:#6A90B0;">Today</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary cards + table -->
+    <div style="flex:1;min-width:0;">
+
+      <!-- Summary cards -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:24px;">
+        <div style="background:#F4F8FB;border-radius:10px;padding:14px 16px;border:1px solid #E2EBF3;border-left:4px solid #2E9BFF;">
+          <div style="font-size:9px;font-weight:700;color:#6A90B0;letter-spacing:1.5px;margin-bottom:6px;text-transform:uppercase;">Start Date</div>
+          <div style="font-size:15px;font-weight:800;color:#0D1B2A;">${formatDate(timelineStart)}</div>
+          <div style="font-size:11px;color:#6A90B0;margin-top:2px;">${getDayName(timelineStart)}</div>
+        </div>
+        <div style="background:#F4F8FB;border-radius:10px;padding:14px 16px;border:1px solid #E2EBF3;border-left:4px solid #F0A500;">
+          <div style="font-size:9px;font-weight:700;color:#6A90B0;letter-spacing:1.5px;margin-bottom:6px;text-transform:uppercase;">End Date</div>
+          <div style="font-size:15px;font-weight:800;color:#0D1B2A;">${formatDate(timelineEnd)}</div>
+          <div style="font-size:11px;color:#6A90B0;margin-top:2px;">${getDayName(timelineEnd)}</div>
+        </div>
+        <div style="background:#F4F8FB;border-radius:10px;padding:14px 16px;border:1px solid #E2EBF3;border-left:4px solid #1DB8A0;">
+          <div style="font-size:9px;font-weight:700;color:#6A90B0;letter-spacing:1.5px;margin-bottom:6px;text-transform:uppercase;">Duration</div>
+          <div style="font-size:15px;font-weight:800;color:#1A6FBF;">${totalDuration || duration} ${unit}</div>
+          <div style="font-size:11px;color:#6A90B0;margin-top:2px;">${allTasks.length} task${allTasks.length !== 1 ? 's' : ''}${milestonesRef.current.length > 0 ? ` · ${milestonesRef.current.length} milestone${milestonesRef.current.length !== 1 ? 's' : ''}` : ''}</div>
+        </div>
+      </div>
+
+      <!-- Tasks table -->
+      <div style="font-size:11px;font-weight:700;color:#6A90B0;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;">Project Tasks</div>
+      <table style="width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+        <thead>
+          <tr style="background:#0D1B2A;">
+            <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;border-radius:0;">TASK</th>
+            <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;">START</th>
+            <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;">END</th>
+            <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;">DURATION</th>
+            <th style="padding:10px 14px;text-align:left;color:white;font-size:11px;font-weight:700;letter-spacing:1px;">DAYS</th>
+          </tr>
+        </thead>
+        <tbody>${taskRows}</tbody>
+      </table>
+
+      ${milestoneRows}
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="margin-top:32px;padding-top:14px;border-top:1px solid #E2EBF3;display:flex;justify-content:space-between;align-items:center;">
+    <div style="font-size:10px;color:#B0C4D8;">Created with DateWheel · Visual Project Planning</div>
+    <div style="font-size:10px;color:#B0C4D8;">${generatedDate}</div>
+  </div>
+
+</body>
+</html>`;
+
     try {
       const { uri } = await Print.printToFileAsync({ html, base64: false });
-      const fileName = `DateWheel_${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-')}.pdf`;
+      const safeName = projectName.replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const fileName = `${safeName}_${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-')}.pdf`;
       const destPath = `${FileSystem.cacheDirectory}${fileName}`;
       await FileSystem.moveAsync({ from: uri, to: destPath });
-      await Sharing.shareAsync(destPath, { mimeType: 'application/pdf', dialogTitle: 'Export Date Wheel Project as PDF', UTI: 'com.adobe.pdf' });
+      await Sharing.shareAsync(destPath, { mimeType: 'application/pdf', dialogTitle: 'Export DateWheel Project as PDF', UTI: 'com.adobe.pdf' });
     } catch (e) {
       Alert.alert('Export failed', 'Could not generate the PDF. Please try again.');
     }
@@ -2451,18 +2623,18 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
 
   <TouchableOpacity
     style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-    onPress={handleSave}
+    onPress={() => requirePro(handleSave)}
   >
     <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
-    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save{!isPro ? ' 🔒' : ''}</Text>
   </TouchableOpacity>
 
   <TouchableOpacity
     style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-    onPress={() => { setSaveName(currentProjectName ?? ""); setSaveAsVisible(true); }}
+    onPress={() => requirePro(() => { setSaveName(currentProjectName ?? ""); setSaveAsVisible(true); })}
   >
     <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
-    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save As</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save As{!isPro ? ' 🔒' : ''}</Text>
   </TouchableOpacity>
 
   <TouchableOpacity
@@ -2528,7 +2700,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               tasks={tasks}
               milestones={milestones}
               totalDuration={totalDuration}
-              holidayCountry={isPro ? settings.holidayCountry : "NONE"}
+              holidayCountry={settings.holidayCountry}
               highlightedTaskId={tappedTaskId}
               highlightedTaskDuration={highlightedTaskDuration}
               onUnitToggle={handleUnitToggle}
@@ -2605,23 +2777,21 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           {/* TR: Calendar */}
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerTR]}
-            onPress={() => requirePro(() => {
+            onPress={() => {
               Animated.timing(wheelFade, { toValue: 0, duration: 350, useNativeDriver: true }).start();
               setCalendarVisible(true);
-            })}
+            }}
             activeOpacity={0.75}
           >
             <View style={styles.cornerSvgTR} pointerEvents="none">
               <Svg width={C} height={C}>
                 <SvgPath d={PATH_TR} fill={theme.card} opacity={0.92} />
-                <SvgPath d={PATH_TR} fill="none" stroke={isPro ? theme.accent : theme.border} strokeWidth={1} />
+                <SvgPath d={PATH_TR} fill="none" stroke={theme.accent} strokeWidth={1} />
               </Svg>
             </View>
             <View style={styles.cornerContentTR}>
-              <View style={[styles.cornerCalIcon, { borderColor: isPro ? theme.accent : theme.muted }]} />
-              <Text style={[styles.cornerLabel, isPro && { color: theme.accent }]}>
-                {isPro ? 'Cal' : '🔒Cal'}
-              </Text>
+              <View style={[styles.cornerCalIcon, { borderColor: theme.accent }]} />
+              <Text style={[styles.cornerLabel, { color: theme.accent }]}>Cal</Text>
             </View>
           </TouchableOpacity>
 
@@ -2639,29 +2809,25 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             </View>
             <View style={styles.cornerContentBL}>
               <View style={[styles.cornerDot, { backgroundColor: currentTaskColor }]} />
-              <Text style={[styles.cornerLabel, { color: currentTaskColor }]}>
-                {(!isPro && tasksRef.current.length > 0) ? '🔒Task' : '+ Task'}
-              </Text>
+              <Text style={[styles.cornerLabel, { color: currentTaskColor }]}>+ Task</Text>
             </View>
           </TouchableOpacity>
 
           {/* BR: Add Milestone */}
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerBR]}
-            onPress={() => requirePro(() => setMilestoneModalVisible(true))}
+            onPress={() => setMilestoneModalVisible(true)}
             activeOpacity={0.75}
           >
             <View style={styles.cornerSvgBR} pointerEvents="none">
               <Svg width={C} height={C}>
                 <SvgPath d={PATH_BR} fill={theme.card} opacity={0.92} />
-                <SvgPath d={PATH_BR} fill="none" stroke={isPro ? '#F0A500' : theme.border} strokeWidth={1} />
+                <SvgPath d={PATH_BR} fill="none" stroke='#F0A500' strokeWidth={1} />
               </Svg>
             </View>
             <View style={styles.cornerContentBR}>
               <View style={styles.cornerDiamond} />
-              <Text style={[styles.cornerLabel, isPro && { color: '#F0A500' }]}>
-                {isPro ? '+Mile' : '🔒Mile'}
-              </Text>
+              <Text style={[styles.cornerLabel, { color: '#F0A500' }]}>+Mile</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -3039,21 +3205,17 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           <View style={styles.viewBtnRow}>
             <TouchableOpacity
               style={[styles.ganttBtn, { borderColor: theme.border, flex: 1 }]}
-              onPress={() => requirePro(() => setGanttVisible(true))}
+              onPress={() => setGanttVisible(true)}
             >
               <Text style={styles.ganttBtnIcon}>📊</Text>
-              <Text style={[styles.ganttBtnText, { color: theme.muted }]}>
-                Gantt{!isPro ? ' 🔒' : ''}
-              </Text>
+              <Text style={[styles.ganttBtnText, { color: theme.muted }]}>Gantt</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.ganttBtn, { borderColor: theme.border, flex: 1 }]}
-              onPress={() => requirePro(() => setCalendarVisible(true))}
+              onPress={() => setCalendarVisible(true)}
             >
               <Text style={styles.ganttBtnIcon}>📅</Text>
-              <Text style={[styles.ganttBtnText, { color: theme.muted }]}>
-                Calendar{!isPro ? ' 🔒' : ''}
-              </Text>
+              <Text style={[styles.ganttBtnText, { color: theme.muted }]}>Calendar</Text>
             </TouchableOpacity>
           </View>
 
@@ -3062,8 +3224,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               style={styles.upgradeBtn}
               onPress={() => setProModalVisible(true)}
             >
-              <Text style={styles.upgradeBtnText}>✨ Unlock Pro Features</Text>
-              <Text style={styles.upgradeBtnSub}>Multi-task, Gantt, Templates & more</Text>
+              <Text style={styles.upgradeBtnText}>✨ Unlock Pro — Save & Export</Text>
+              <Text style={styles.upgradeBtnSub}>Save projects, open templates, export to PDF/CSV & more</Text>
             </TouchableOpacity>
           )}
         </View>

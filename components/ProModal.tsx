@@ -80,12 +80,12 @@ export default function ProModal({ visible, onClose, onSuccess }: Props) {
   }
 
   const features = [
-    { icon: '🔢', text: 'Multi-task project planning' },
-    { icon: '📂', text: 'Save & open projects' },
-    { icon: '📋', text: 'Reusable templates' },
-    { icon: '📊', text: 'Gantt chart view' },
-    { icon: '🏖️', text: 'Holiday exclusions' },
-    { icon: '↔️', text: 'Drag to adjust task boundaries' },
+    { icon: '💾', text: 'Save & open named projects' },
+    { icon: '📋', text: 'Reusable project templates' },
+    { icon: '📊', text: 'Export to PDF, CSV, XLSX & iCal' },
+    { icon: '📂', text: 'Open & reload saved projects' },
+    { icon: '🔔', text: 'Task & milestone reminders' },
+    { icon: '{}', text: 'Export raw data as JSON' },
   ];
 
   return (
@@ -105,7 +105,7 @@ export default function ProModal({ visible, onClose, onSuccess }: Props) {
             </TouchableOpacity>
             <View style={styles.headerContent}>
               <Text style={styles.proTag}>PRO</Text>
-              <Text style={styles.title}>Unlock Date Wheel Pro</Text>
+              <Text style={styles.title}>Save & Export Your Projects</Text>
               <Text style={styles.subtitle}>One-time purchase — yours forever</Text>
             </View>
           </View>

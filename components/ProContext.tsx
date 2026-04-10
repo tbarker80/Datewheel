@@ -27,7 +27,7 @@ export function useProStatus() {
 }
 
 export function ProProvider({ children }: { children: React.ReactNode }) {
-  const [isPro, setIsPro] = useState(true);
+  const [isPro, setIsPro] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [price, setPrice] = useState('$2.99');
 
