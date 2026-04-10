@@ -105,6 +105,7 @@ export interface Project {
   endDate: string;
   createdAt: string;
   updatedAt: string;
+  readOnly?: boolean;
 }
 
 interface Props {
@@ -145,28 +146,37 @@ export async function saveProject(
   currentTaskName: string,
   unit: string,
   startDate: Date,
-  endDate: Date
-): Promise<void> {
+  endDate: Date,
+  existingId?: number
+): Promise<number> {
   try {
     const stored = await AsyncStorage.getItem("projects");
     const existing: Project[] = stored ? JSON.parse(stored) : [];
     const now = new Date().toLocaleDateString("en-US", {
       month: "short", day: "numeric", year: "numeric",
     });
+    const id = existingId ?? Date.now();
+    const prev = existing.find(p => p.id === id);
     const newProject: Project = {
-      id: Date.now(),
+      id,
       name,
       tasks,
       currentTaskName,
       unit,
       startDate: startDate.toISOString(),
       endDate: endDate.toISOString(),
-      createdAt: now,
+      createdAt: prev?.createdAt ?? now,
       updatedAt: now,
+      readOnly: prev?.readOnly ?? false,   // preserve existing readOnly flag on overwrite
     };
-    await AsyncStorage.setItem("projects", JSON.stringify([newProject, ...existing]));
+    const updated = existingId
+      ? existing.map(p => p.id === existingId ? newProject : p)
+      : [newProject, ...existing];
+    await AsyncStorage.setItem("projects", JSON.stringify(updated));
+    return id;
   } catch (e) {
     console.warn('Failed to save project:', e);
+    return Date.now();
   }
 }
 
@@ -306,7 +316,14 @@ export default function TemplatesModal({ visible, onClose, onLoadTemplate, onLoa
                     onLongPress={() => deleteProject(project.id)}
                   >
                     <View style={styles.itemLeft}>
-                      <Text style={styles.itemName}>{project.name}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Text style={styles.itemName}>{project.name}</Text>
+                        {project.readOnly && (
+                          <View style={styles.readOnlyBadge}>
+                            <Text style={styles.readOnlyBadgeText}>READ ONLY</Text>
+                          </View>
+                        )}
+                      </View>
                       <Text style={styles.itemMeta}>
                         {project.tasks.length + 1} tasks · {project.unit}
                       </Text>
@@ -564,5 +581,19 @@ const styles = StyleSheet.create({
     borderColor: "#2E7DBC",
     borderWidth: 0.5,
     opacity: 0.85,
+  },
+  readOnlyBadge: {
+    backgroundColor: 'rgba(240,165,0,0.12)',
+    borderWidth: 1,
+    borderColor: '#F0A500',
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  readOnlyBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#F0A500',
+    letterSpacing: 0.8,
   },
 });

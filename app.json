@@ -2,7 +2,7 @@
   "expo": {
     "name": "Date Wheel",
     "slug": "DateWheel",
-    "version": "1.0.23",
+    "version": "1.0.24",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "datewheel",
@@ -42,7 +42,7 @@
         "backgroundColor": "#0F1923"
       },
       "package": "com.tbarker80.DateWheel",
-      "versionCode": 23,
+      "versionCode": 24,
       "permissions": ["com.android.vending.BILLING"],
       "intentFilters": [
         {

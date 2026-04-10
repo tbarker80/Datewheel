@@ -263,6 +263,7 @@ export default function Index() {
   const [saveAsVisible, setSaveAsVisible] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
   const [currentProjectName, setCurrentProjectName] = useState<string | null>(null);
+  const [isReadOnly, setIsReadOnly] = useState(false);
   const [activeLagDays, setActiveLagDays] = useState<number | undefined>(undefined);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -1661,6 +1662,7 @@ export default function Index() {
           await AsyncStorage.removeItem("milestones");
           setCurrentProjectId(null);
           setCurrentProjectName(null);
+          setIsReadOnly(false);
           setActiveLagDays(undefined);
           setStepModes({});
           setTappedTaskId(null);
@@ -1897,26 +1899,38 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   }
 
   async function handleSave() {
-    if (currentProjectId !== null && currentProjectName !== null) {
-      // Overwrite existing project silently
-      await saveProject(currentProjectName, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current, currentProjectId);
-      if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Saved", `"${currentProjectName}" has been updated.`);
-    } else {
-      // No current project — behave like Save As
-      setSaveName("");
-      setSaveAsVisible(true);
-    }
+    setSaveName(currentProjectName ?? "");
+    setSaveAsVisible(true);
   }
 
   async function handleSaveAsProject() {
     const name = saveName.trim() || `Project ${new Date().toLocaleDateString()}`;
-    const id = await saveProject(name, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current);
+    const id = await saveProject(name, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current, currentProjectId ?? undefined);
     setCurrentProjectId(id);
     setCurrentProjectName(name);
     setSaveName(""); setSaveAsVisible(false);
     if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert("Saved!", `"${name}" saved as a project.`);
+  }
+
+  async function handleSaveAsReadOnly() {
+    const name = saveName.trim() || `Project ${new Date().toLocaleDateString()}`;
+    const id = await saveProject(name, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current);
+    // Patch the saved project to mark it read-only
+    try {
+      const stored = await AsyncStorage.getItem('projects');
+      const projects: Project[] = stored ? JSON.parse(stored) : [];
+      const patched = projects.map(p => p.id === id ? { ...p, readOnly: true } : p);
+      await AsyncStorage.setItem('projects', JSON.stringify(patched));
+    } catch (e) {
+      console.warn('Failed to mark project read-only:', e);
+    }
+    setCurrentProjectId(id);
+    setCurrentProjectName(name);
+    setIsReadOnly(true);
+    setSaveName(''); setSaveAsVisible(false);
+    if (settings.hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Saved!', `"${name}" saved as a read-only project.`);
   }
 
   async function handleSaveAsTemplate() {
@@ -2572,6 +2586,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     setUnit(project.unit);
     setCurrentProjectId(project.id);
     setCurrentProjectName(project.name);
+    setIsReadOnly(project.readOnly ?? false);
   }
 
   return (
@@ -2592,7 +2607,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             <View style={styles.titleDot} />
           </View>
           <View style={styles.headerRight}>
-            {isPro && (
+            {isReadOnly && (
+              <View style={styles.readOnlyBadge}>
+                <Text style={styles.readOnlyBadgeText}>READ ONLY</Text>
+              </View>
+            )}
+            {isPro && !isReadOnly && (
               <View style={styles.proBadge}>
                 <Text style={styles.proBadgeText}>PRO</Text>
               </View>
@@ -2615,32 +2635,34 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
 
   <TouchableOpacity
     style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-    onPress={() => requirePro(() => setOpenVisible(true))}
+    onPress={() => setOpenVisible(true)}
   >
     <Text style={[styles.toolbarIcon, { color: theme.muted }]}>📂</Text>
-    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Open{!isPro ? ' 🔒' : ''}</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Open</Text>
   </TouchableOpacity>
 
-  <TouchableOpacity
-    style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-    onPress={() => requirePro(handleSave)}
-  >
-    <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
-    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save{!isPro ? ' 🔒' : ''}</Text>
-  </TouchableOpacity>
+  {!isReadOnly && (
+    <TouchableOpacity
+      style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+      onPress={() => requirePro(handleSave)}
+    >
+      <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
+      <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save{!isPro ? ' 🔒' : ''}</Text>
+    </TouchableOpacity>
+  )}
 
   <TouchableOpacity
     style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
     onPress={() => requirePro(() => { setSaveName(currentProjectName ?? ""); setSaveAsVisible(true); })}
   >
     <Text style={[styles.toolbarIcon, { color: theme.muted }]}>💾</Text>
-    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Save As{!isPro ? ' 🔒' : ''}</Text>
+    <Text style={[styles.toolbarLabel, { color: theme.accent }]}>{isReadOnly ? 'Save As…' : `Save As${!isPro ? ' 🔒' : ''}`}</Text>
   </TouchableOpacity>
 
   <TouchableOpacity
-  style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: canUndo ? 1 : 1 }]}
+  style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: (canUndo && !isReadOnly) ? 1 : 0.4 }]}
   onPress={handleUndo}
-  disabled={!canUndo}
+  disabled={!canUndo || isReadOnly}
 >
   <Text style={[styles.toolbarIcon, { color: theme.accent, fontSize: 22 }]}>↩</Text>
   <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Undo</Text>
@@ -2652,27 +2674,27 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         {/* Timeline dates */}
         <View style={styles.dateRow}>
           <View style={[styles.dateField, { backgroundColor: theme.card }]}>
-            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', -1)}>
-              <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', -1)} disabled={isReadOnly}>
+              <Text style={[styles.dateStepText, { color: isReadOnly ? theme.muted : theme.text }]}>−</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("projectStart", false)}>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("projectStart", false)} disabled={isReadOnly}>
               <Text style={[styles.fieldLabel, { color: theme.muted }]}>PROJ START</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineStart)}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', 1)}>
-              <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('start', 1)} disabled={isReadOnly}>
+              <Text style={[styles.dateStepText, { color: isReadOnly ? theme.muted : theme.text }]}>+</Text>
             </TouchableOpacity>
           </View>
           <View style={[styles.dateField, { backgroundColor: theme.card }]}>
-            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', -1)}>
-              <Text style={[styles.dateStepText, { color: theme.text }]}>−</Text>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', -1)} disabled={isReadOnly}>
+              <Text style={[styles.dateStepText, { color: isReadOnly ? theme.muted : theme.text }]}>−</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end", false)}>
+            <TouchableOpacity style={styles.dateFieldInner} onPress={() => openPicker("end", false)} disabled={isReadOnly}>
               <Text style={[styles.fieldLabel, { color: theme.muted }]}>PROJECT END</Text>
               <Text style={[styles.fieldValue, { color: theme.text }]}>{formatDate(timelineEnd)}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', 1)}>
-              <Text style={[styles.dateStepText, { color: theme.text }]}>+</Text>
+            <TouchableOpacity style={styles.dateStepBtn} onPress={() => handleShiftTimeline('end', 1)} disabled={isReadOnly}>
+              <Text style={[styles.dateStepText, { color: isReadOnly ? theme.muted : theme.text }]}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2710,7 +2732,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               onDragEnd={handleDragEnd}
               onDragActive={handleDragActive}
               onTaskTap={handleTaskTap}
-              isLocked={isLocked}
+              isLocked={isLocked || isReadOnly}
               activeLagDays={activeLagDays}
               onTimelineShift={handleTimelineShift}
               onBoundaryTap={(taskIndex) => {
@@ -2752,6 +2774,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </Animated.View>
 
           {/* TL: Lock Timeline */}
+          {!isReadOnly && (
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerTL]}
             onPress={() => {
@@ -2773,14 +2796,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               </Text>
             </View>
           </TouchableOpacity>
+          )}
 
           {/* TR: Calendar */}
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerTR]}
-            onPress={() => {
-              Animated.timing(wheelFade, { toValue: 0, duration: 350, useNativeDriver: true }).start();
-              setCalendarVisible(true);
-            }}
+            onPress={() => { Animated.timing(wheelFade, { toValue: 0, duration: 350, useNativeDriver: true }).start(); setCalendarVisible(true); }}
             activeOpacity={0.75}
           >
             <View style={styles.cornerSvgTR} pointerEvents="none">
@@ -2796,6 +2817,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </TouchableOpacity>
 
           {/* BL: Add Task */}
+          {!isReadOnly && (
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerBL]}
             onPress={handleAddTask}
@@ -2812,8 +2834,10 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               <Text style={[styles.cornerLabel, { color: currentTaskColor }]}>+ Task</Text>
             </View>
           </TouchableOpacity>
+          )}
 
           {/* BR: Add Milestone */}
+          {!isReadOnly && (
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerBR]}
             onPress={() => setMilestoneModalVisible(true)}
@@ -2830,6 +2854,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               <Text style={[styles.cornerLabel, { color: '#F0A500' }]}>+Mile</Text>
             </View>
           </TouchableOpacity>
+          )}
         </View>
 
         {/* Zoom controls */}
@@ -3021,6 +3046,13 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   <View style={styles.saveOptionText}>
                     <Text style={styles.saveOptionTitle}>Save as Project</Text>
                     <Text style={styles.saveOptionSub}>Saves actual dates — open and continue later</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsReadOnly}>
+                  <Text style={styles.saveOptionIcon}>🔒</Text>
+                  <View style={styles.saveOptionText}>
+                    <Text style={styles.saveOptionTitle}>Save as Read Only</Text>
+                    <Text style={styles.saveOptionSub}>Saves a view-only version — cannot be edited when opened</Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.saveOptionBtn} onPress={handleSaveAsTemplate}>
@@ -3674,5 +3706,19 @@ zoomResetText: {
   projectNameUnsaved: {
     color: '#3A5A72',
     fontStyle: 'italic',
+  },
+  readOnlyBadge: {
+    backgroundColor: 'rgba(240,165,0,0.12)',
+    borderWidth: 1,
+    borderColor: '#F0A500',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  readOnlyBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#F0A500',
+    letterSpacing: 1,
   },
 });
