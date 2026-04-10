@@ -1667,6 +1667,7 @@ export default function Index() {
           setStepModes({});
           setTappedTaskId(null);
           setDragDisplayDates(null);
+          setTaskNameVisible(true);
         },
       },
     ]);
