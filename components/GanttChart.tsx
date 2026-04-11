@@ -38,6 +38,7 @@ interface Props {
   duration: string;
   unit: string;
   currentTaskColor: string;
+  activeTaskPercentComplete?: number;
 }
 
 export default function GanttChart({
@@ -51,6 +52,7 @@ export default function GanttChart({
   duration,
   unit,
   currentTaskColor,
+  activeTaskPercentComplete = 0,
 }: Props) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const isLandscape = screenWidth > screenHeight;
@@ -81,6 +83,7 @@ export default function GanttChart({
       color: currentTaskColor,
       duration,
       unit,
+      percentComplete: activeTaskPercentComplete,
     },
   ];
 
@@ -347,6 +350,12 @@ export default function GanttChart({
                                 {task.duration} {task.unit}
                               </Text>
                             )}
+                            {(task.percentComplete ?? 0) > 0 && (
+                              <View style={[
+                                styles.progressLine,
+                                { width: `${task.percentComplete}%` as any },
+                              ]} />
+                            )}
                           </View>
                         </View>
                       );
@@ -516,6 +525,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   barLabel: { fontSize: 10, color: '#FFFFFF', fontWeight: '600' },
+  progressLine: {
+    position: 'absolute',
+    top: (ROW_HEIGHT - 20) / 3,       // center of 1/3-height bar within the task bar
+    left: 0,
+    height: (ROW_HEIGHT - 20) / 3,    // 1/3 of task bar thickness
+    backgroundColor: '#000000',
+    opacity: 0.55,
+    borderRadius: 1,
+  },
   milestoneLine: { position: 'absolute', top: 0, bottom: 0, width: 1.5, opacity: 0.7 },
   milestoneDiamond: {
     position: 'absolute',

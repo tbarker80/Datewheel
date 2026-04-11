@@ -285,6 +285,7 @@ export default function DateWheel({
   const panStartTouchRef = React.useRef({ x: 0, y: 0 });
   const panStartPanRef = React.useRef({ x: 0, y: 0 });
   const angleToDayRef = React.useRef<number | null>(null);
+  const dragTaskStartDayRef = React.useRef<number | null>(null);
   const [activeDot, setActiveDot] = React.useState<'start' | 'end' | number | null>(null);
 
   function dist(ax: number, ay: number, bx: number, by: number) {
@@ -336,7 +337,9 @@ export default function DateWheel({
       return;
     }
 
-    const distToStart = dist(x, y, startXY.x, startXY.y);
+    // When stored tasks exist, the start dot sits on top of the last boundary dot.
+    // Exclude it from hit-testing so the boundary dot always wins there.
+    const distToStart = tasks.length === 0 ? dist(x, y, startXY.x, startXY.y) : Infinity;
     const distToEnd = dist(x, y, endXY.x, endXY.y);
 
     let closestBoundaryDist = Infinity;
@@ -358,6 +361,9 @@ export default function DateWheel({
       if (minDist === closestBoundaryDist && closestBoundaryIndex >= 0) {
         dragTargetRef.current = closestBoundaryIndex;
         setActiveDot(closestBoundaryIndex);
+        dragTaskStartDayRef.current = tasks[closestBoundaryIndex]
+          ? getDayOfYear(new Date(tasks[closestBoundaryIndex].startDate))
+          : null;
         onBoundaryDragStart(closestBoundaryIndex);
       } else if (minDist === distToStart) {
         dragTargetRef.current = 'start';
@@ -426,11 +432,10 @@ export default function DateWheel({
     const target = dragTargetRef.current;
 
     if (typeof target === 'number') {
-      const taskStartDate = tasks[target] ? new Date(tasks[target].startDate) : startDate;
-      const taskStartDay = getDayOfYear(taskStartDate);
-      const snappedDay = snapToUnit(dayOfYear, unit, false, taskStartDay);
+      const frozenStartDay = dragTaskStartDayRef.current ?? getDayOfYear(tasks[target] ? new Date(tasks[target].startDate) : startDate);
+      const snappedDay = snapToUnit(dayOfYear, unit, false, frozenStartDay);
       const newDate = new Date(startDate.getFullYear(), 0, snappedDay);
-      if (tasks[target] && newDate > new Date(tasks[target].startDate)) {
+      if (snappedDay > frozenStartDay) {
         onBoundaryChange(target, newDate);
       }
     } else if (target === 'start') {
@@ -452,6 +457,7 @@ export default function DateWheel({
     isDraggingRef.current = false;
     isPanningViewRef.current = false;
     angleToDayRef.current = null;
+    dragTaskStartDayRef.current = null;
     setActiveDot(null);
     onDragActive(false);
     onDragEnd();
@@ -754,13 +760,17 @@ export default function DateWheel({
             );
           })}
 
-          {/* Start dot */}
-          {activeDot === 'start' && <Circle cx={startXY.x} cy={startXY.y} r={22} fill="#2E9BFF" fillOpacity={0.2}/>}
-          <Circle cx={startXY.x} cy={startXY.y} r={activeDot === 'start' ? 15 : 10} fill="#2E9BFF"/>
-          <Circle cx={startXY.x} cy={startXY.y} r={activeDot === 'start' ? 15 : 10}
-            fill="none" stroke="#FFFFFF"
-            strokeWidth={activeDot === 'start' ? 2.5 : 1.5}
-            strokeOpacity={activeDot === 'start' ? 0.9 : 0.4}/>
+          {/* Start dot — only shown when there are no stored tasks */}
+          {tasks.length === 0 && (
+            <>
+              {activeDot === 'start' && <Circle cx={startXY.x} cy={startXY.y} r={22} fill="#2E9BFF" fillOpacity={0.2}/>}
+              <Circle cx={startXY.x} cy={startXY.y} r={activeDot === 'start' ? 15 : 10} fill="#2E9BFF"/>
+              <Circle cx={startXY.x} cy={startXY.y} r={activeDot === 'start' ? 15 : 10}
+                fill="none" stroke="#FFFFFF"
+                strokeWidth={activeDot === 'start' ? 2.5 : 1.5}
+                strokeOpacity={activeDot === 'start' ? 0.9 : 0.4}/>
+            </>
+          )}
 
           {/* End dot */}
           {activeDot === 'end' && <Circle cx={endXY.x} cy={endXY.y} r={24} fill="#F0A500" fillOpacity={0.2}/>}

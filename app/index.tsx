@@ -133,11 +133,16 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 // Advance Saturday → Monday, Sunday → Monday. Friday and earlier unchanged.
-function snapToWeekday(date: Date): Date {
+function snapToWeekday(date: Date, direction: 'forward' | 'backward' = 'forward'): Date {
   const d = new Date(date);
   const dow = d.getDay(); // 0=Sun, 6=Sat
-  if (dow === 6) d.setDate(d.getDate() + 2);
-  else if (dow === 0) d.setDate(d.getDate() + 1);
+  if (dow === 0 || dow === 6) {
+    if (direction === 'backward') {
+      d.setDate(d.getDate() - (dow === 0 ? 2 : 1)); // Sun→Fri, Sat→Fri
+    } else {
+      d.setDate(d.getDate() + (dow === 6 ? 2 : 1)); // Sat→Mon, Sun→Mon
+    }
+  }
   return d;
 }
 
@@ -309,14 +314,18 @@ function SwipeableTaskRow({
   onDelete,
   onEdit,
   onProgress,
+  disabled,
 }: {
   children: React.ReactNode;
   onDelete: () => void;
   onEdit: () => void;
   onProgress: () => void;
+  disabled?: boolean;
 }) {
   const ref = useRef<SwipeableMethods>(null);
   const close = () => ref.current?.close();
+
+  if (disabled) return <>{children}</>;
 
   return (
     <ReanimatedSwipeable
@@ -566,8 +575,10 @@ export default function Index() {
         startDate: new Date(new Date(t.startDate).getTime() + deltaMs).toISOString(),
         endDate: new Date(new Date(t.endDate).getTime() + deltaMs).toISOString(),
       })));
-      setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
-      setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
+      const lockedActiveDuration = endDateRef.current.getTime() - startDateRef.current.getTime();
+      const lockedNewStart = new Date(startDateRef.current.getTime() + deltaMs);
+      setStartDateSync(lockedNewStart);
+      setEndDateSync(new Date(lockedNewStart.getTime() + lockedActiveDuration));
       return;
     }
 
@@ -674,23 +685,25 @@ export default function Index() {
         return { ...t, endDate: newDate.toISOString(), originalDuration: undefined };
       });
 
+      const snapDir = direction === 1 ? 'forward' : 'backward';
+
       if (existingMode === 'shift') {
         saveUndoSnapshot();
         if (field === 'end') {
-          saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks));
+          saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks), 'skip');
           if (activeLagDays === undefined) {
             setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
             setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
           }
         } else {
-          saveTasks(applyStepCascade(0, idx - 1, deltaMs, updatedTasks));
+          saveTasks(applyStepCascade(0, idx - 1, deltaMs, updatedTasks), 'skip');
         }
         return;
       }
 
       if (existingMode === 'free') {
         saveUndoSnapshot();
-        saveTasks(updatedTasks);
+        saveTasks(updatedTasks, snapDir);
         return;
       }
 
@@ -708,7 +721,7 @@ export default function Index() {
               lagOwnerIndex: idx + 1,
               onShift: () => {
                 saveUndoSnapshot();
-                saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks));
+                saveTasks(applyStepCascade(idx + 1, tasksRef.current.length - 1, deltaMs, updatedTasks), 'skip');
                 if (activeLagDays === undefined) {
                   setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
                   setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
@@ -736,7 +749,7 @@ export default function Index() {
                     setStartDateSync(new Date(startDateRef.current.getTime() + cascadeDelta));
                     setEndDateSync(new Date(endDateRef.current.getTime() + cascadeDelta));
                   }
-                  saveTasks(repositioned);
+                  saveTasks(repositioned, snapDir);
                   stepLagCallbackRef.current = null;
                 };
                 setLagEditInitialOverride(lagDays);
@@ -758,7 +771,7 @@ export default function Index() {
               lagOwnerIndex: -99,
               onShift: () => {
                 saveUndoSnapshot();
-                saveTasks(updatedTasks);
+                saveTasks(updatedTasks, snapDir);
                 setStartDateSync(new Date(startDateRef.current.getTime() + deltaMs));
                 setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
               },
@@ -767,7 +780,7 @@ export default function Index() {
                   saveUndoSnapshot();
                   const newActiveStart = new Date(newDate.getTime() + confirmedLag * 86400000);
                   const activeDurationMs = endDateRef.current.getTime() - startDateRef.current.getTime();
-                  saveTasks(updatedTasks);
+                  saveTasks(updatedTasks, snapDir);
                   setStartDateSync(newActiveStart);
                   setEndDateSync(new Date(newActiveStart.getTime() + activeDurationMs));
                   setActiveLagDays(confirmedLag === 0 ? undefined : confirmedLag);
@@ -794,7 +807,7 @@ export default function Index() {
               lagOwnerIndex: idx,
               onShift: () => {
                 saveUndoSnapshot();
-                saveTasks(applyStepCascade(0, idx - 1, deltaMs, updatedTasks));
+                saveTasks(applyStepCascade(0, idx - 1, deltaMs, updatedTasks), 'skip');
               },
               onFree: () => {
                 stepLagCallbackRef.current = (confirmedLag: number) => {
@@ -818,7 +831,7 @@ export default function Index() {
                     setStartDateSync(new Date(startDateRef.current.getTime() + cascadeDelta));
                     setEndDateSync(new Date(endDateRef.current.getTime() + cascadeDelta));
                   }
-                  saveTasks(repositioned);
+                  saveTasks(repositioned, snapDir);
                   stepLagCallbackRef.current = null;
                 };
                 setLagEditInitialOverride(lagDays);
@@ -833,7 +846,7 @@ export default function Index() {
 
       // No adjacent conflict — just move
       saveUndoSnapshot();
-      saveTasks(updatedTasks);
+      saveTasks(updatedTasks, snapDir);
       return;
     }
 
@@ -848,7 +861,7 @@ export default function Index() {
 
       if (existingMode === 'shift') {
         saveUndoSnapshot();
-        saveTasks(applyStepCascade(0, tasksRef.current.length - 1, deltaMs, tasksRef.current));
+        saveTasks(applyStepCascade(0, tasksRef.current.length - 1, deltaMs, tasksRef.current), 'skip');
         setStartDateSync(newStart);
         setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
         return;
@@ -865,7 +878,7 @@ export default function Index() {
             lagOwnerIndex: -99,
             onShift: () => {
               saveUndoSnapshot();
-              saveTasks(applyStepCascade(0, tasksRef.current.length - 1, deltaMs, tasksRef.current));
+              saveTasks(applyStepCascade(0, tasksRef.current.length - 1, deltaMs, tasksRef.current), 'skip');
               setStartDateSync(newStart);
               setEndDateSync(new Date(endDateRef.current.getTime() + deltaMs));
             },
@@ -1101,34 +1114,38 @@ export default function Index() {
   }
 
   function setEndDateSync(date: Date) {
-    const snapped = settings.noWeekendEnd ? snapToWeekday(date) : date;
-    setEndDate(snapped);
-    endDateRef.current = snapped;
+    setEndDate(date);
+    endDateRef.current = date;
   }
 
   // Snap end dates of stored tasks when noWeekendEnd is on.
   // Stores originalDuration so that if the start date moves, the end recalculates
   // from the intended duration rather than the snapped one.
-  function snapTaskEndDates(taskList: Task[]): Task[] {
+  function snapTaskEndDates(taskList: Task[], direction: 'forward' | 'backward' = 'forward'): Task[] {
     if (!settings.noWeekendEnd) return taskList;
     return taskList.map(t => {
-      const snapped = snapToWeekday(new Date(t.endDate));
-      if (snapped.toISOString() === t.endDate) {
-        // No snap needed — clear any stale originalDuration
+      const snappedStart = snapToWeekday(new Date(t.startDate), 'forward');
+      const snappedEnd = snapToWeekday(new Date(t.endDate), direction);
+      const startChanged = snappedStart.toISOString() !== t.startDate;
+      const endChanged = snappedEnd.toISOString() !== t.endDate;
+      if (!startChanged && !endChanged) {
         const { originalDuration: _, ...rest } = t;
         return rest;
       }
+      const effectiveStart = startChanged ? snappedStart : new Date(t.startDate);
+      const effectiveEnd = endChanged ? snappedEnd : new Date(t.endDate);
       return {
         ...t,
-        originalDuration: t.originalDuration ?? t.duration, // preserve pre-snap duration
-        endDate: snapped.toISOString(),
-        duration: String(daysBetween(new Date(t.startDate), snapped)),
+        startDate: effectiveStart.toISOString(),
+        originalDuration: endChanged ? (t.originalDuration ?? t.duration) : t.originalDuration,
+        endDate: effectiveEnd.toISOString(),
+        duration: String(daysBetween(effectiveStart, effectiveEnd)),
       };
     });
   }
 
-  async function saveTasks(newTasks: Task[]) {
-    const snapped = snapTaskEndDates(newTasks);
+  async function saveTasks(newTasks: Task[], snapDir: 'forward' | 'backward' | 'skip' = 'forward') {
+    const snapped = snapDir === 'skip' ? newTasks : snapTaskEndDates(newTasks, snapDir);
     setTasksSync(snapped);
     await AsyncStorage.setItem("tasks", JSON.stringify(snapped));
   }
@@ -1250,10 +1267,10 @@ export default function Index() {
     }
     const snapActiveStart = new Date(activeStartSnapshotRef.current);
     const snapActiveEnd = new Date(activeEndSnapshotRef.current);
+    const activeDurationMs = snapActiveEnd.getTime() - snapActiveStart.getTime();
     snapActiveStart.setDate(snapActiveStart.getDate() + shiftDays);
-    snapActiveEnd.setDate(snapActiveEnd.getDate() + shiftDays);
     setStartDateSync(snapActiveStart);
-    setEndDateSync(snapActiveEnd);
+    setEndDateSync(new Date(snapActiveStart.getTime() + activeDurationMs));
     for (let i = taskIndex; i < updated.length; i++) {
       const task = updated[i];
       if (task.notificationId && task.reminderDays) {
@@ -1325,12 +1342,11 @@ export default function Index() {
 
     setTasksSync(shiftedTasks);
     await AsyncStorage.setItem("tasks", JSON.stringify(shiftedTasks));
+    const activeDurationMs = endDateRef.current.getTime() - startDateRef.current.getTime();
     const newStart = new Date(startDateRef.current);
-    const newEnd = new Date(endDateRef.current);
     newStart.setDate(newStart.getDate() + shiftDays);
-    newEnd.setDate(newEnd.getDate() + shiftDays);
     setStartDateSync(newStart);
-    setEndDateSync(newEnd);
+    setEndDateSync(new Date(newStart.getTime() + activeDurationMs));
 
     // Reschedule notifications
     for (const task of shiftedTasks) {
@@ -2819,9 +2835,9 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   </TouchableOpacity>
 
   <TouchableOpacity
-  style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: (canUndo && !isReadOnly) ? 1 : 0.4 }]}
+  style={[styles.toolbarBtn, { backgroundColor: theme.card, borderColor: theme.border, opacity: (canUndo && !isReadOnly && !isLocked) ? 1 : 0.4 }]}
   onPress={handleUndo}
-  disabled={!canUndo || isReadOnly}
+  disabled={!canUndo || isReadOnly || isLocked}
 >
   <Text style={[styles.toolbarIcon, { color: theme.accent, fontSize: 22 }]}>↩</Text>
   <Text style={[styles.toolbarLabel, { color: theme.accent }]}>Undo</Text>
@@ -2977,7 +2993,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           </TouchableOpacity>
 
           {/* BL: Add Task */}
-          {!isReadOnly && (
+          {!isReadOnly && !isLocked && (
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerBL]}
             onPress={handleAddTask}
@@ -2997,7 +3013,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           )}
 
           {/* BR: Add Milestone */}
-          {!isReadOnly && (
+          {!isReadOnly && !isLocked && (
           <TouchableOpacity
             style={[styles.cornerBtn, styles.cornerBR]}
             onPress={() => setMilestoneModalVisible(true)}
@@ -3287,6 +3303,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
           ].map((item, i, arr) => (
             <SwipeableTaskRow
               key={item.id}
+              disabled={isLocked}
               onDelete={() => {
                 if (item.isActive) {
                   Alert.alert('Delete', 'Remove the active task?', [
@@ -3312,6 +3329,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                 { backgroundColor: item.id === tappedTaskId ? theme.cardHighlight : theme.card },
               ]}
               onLongPress={() => {
+                if (isLocked) return;
                 if (settings.hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 setTaskActionTarget({ id: item.id, name: item.name, color: item.color, isActive: !!item.isActive });
               }}
@@ -3319,9 +3337,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             >
               <View style={[styles.taskColorBar, { backgroundColor: item.color }]} />
               <View style={styles.taskItemContent}>
-                <TouchableOpacity onPress={() => item.isActive ? handleRenameCurrentTask() : handleRenameTask(item.id)}>
+                <TouchableOpacity
+                  onPress={() => { if (!isLocked) item.isActive ? handleRenameCurrentTask() : handleRenameTask(item.id); }}
+                  disabled={isLocked}
+                >
                   <Text style={[styles.taskItemName, { color: theme.text }]}>
-                    {item.name} <Text style={styles.editHint}>✎</Text>
+                    {item.name}{!isLocked && <Text style={styles.editHint}> ✎</Text>}
                   </Text>
                 </TouchableOpacity>
                 <Text style={[styles.taskItemDates, { color: theme.muted }]}>
@@ -3333,7 +3354,8 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   </Text>
                   <TouchableOpacity
                     style={styles.pctBarTouch}
-                    onPress={() => { setPctEditTaskId(item.id); setPctEditValue(item.percentComplete ?? 0); }}
+                    onPress={() => { if (!isLocked) { setPctEditTaskId(item.id); setPctEditValue(item.percentComplete ?? 0); } }}
+                    disabled={isLocked}
                   >
                     <View style={styles.pctBarTrack}>
                       <View style={[styles.pctBarFill, { width: `${item.percentComplete ?? 0}%` as any, backgroundColor: item.color }]} />
@@ -3343,7 +3365,9 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                 </View>
                   {item.lagDays !== undefined && item.lagDays !== 0 && !item.isActive && (
                 <TouchableOpacity
+                  disabled={isLocked}
                   onPress={() => {
+                    if (isLocked) return;
                     const idx = tasksRef.current.findIndex(t => t.id === item.id);
                     if (idx > 0) {
                       setLagEditTaskIndex(idx);
@@ -3352,16 +3376,17 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                   }}
                 >
                   <Text style={[styles.taskLagBadge, { color: item.lagDays < 0 ? '#EF4444' : '#F0A500' }]}>
-                    {item.lagDays < 0 ? `⚡ ${Math.abs(item.lagDays)}d overlap ✎` : `↔ ${item.lagDays}d gap ✎`}
+                    {item.lagDays < 0 ? `⚡ ${Math.abs(item.lagDays)}d overlap` : `↔ ${item.lagDays}d gap`}{!isLocked && ' ✎'}
                   </Text>
                 </TouchableOpacity>
               )}
               </View>
               <View style={styles.taskRight}>
-                <TouchableOpacity onPress={() => handleBellPress(item)}>
-                  <Text style={[styles.reminderBell, { opacity: (item.isActive ? activeTaskReminderDays : item.reminderDays) ? 1 : 0.3 }]}>🔔</Text>
+                <TouchableOpacity onPress={() => { if (!isLocked) handleBellPress(item); }} disabled={isLocked}>
+                  <Text style={[styles.reminderBell, { opacity: isLocked ? 0.2 : ((item.isActive ? activeTaskReminderDays : item.reminderDays) ? 1 : 0.3) }]}>🔔</Text>
                 </TouchableOpacity>
                 <Text style={[styles.taskNum, { color: theme.muted }]}>#{i + 1}</Text>
+                {!isLocked && (
                 <View style={styles.moveButtons}>
                   <TouchableOpacity
                     onPress={() => handleMoveTask(i, 'up')}
@@ -3378,6 +3403,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
                     <Text style={[styles.moveBtnText, { color: i === arr.length - 1 ? theme.border : theme.muted }]}>▼</Text>
                   </TouchableOpacity>
                 </View>
+                )}
               </View>
             </TouchableOpacity>
             </SwipeableTaskRow>
@@ -3391,7 +3417,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
               <TouchableOpacity
                 key={milestone.id}
                 style={[styles.milestoneItem, { backgroundColor: theme.card }]}
-                onLongPress={() => handleMilestoneLongPress(milestone)}
+                onLongPress={() => { if (!isLocked) handleMilestoneLongPress(milestone); }}
               >
                 <View style={[styles.milestoneColorBar, { backgroundColor: milestone.color }]} />
                 <View style={[styles.milestoneDiamondItem, { backgroundColor: milestone.color }]} />
@@ -3614,10 +3640,10 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         onCancel={() => setTaskEditId(null)}
       />
 
-      <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 1} showDuration onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
+      <TaskNameModal visible={taskNameVisible} taskNumber={tasks.length + 2} showDuration onConfirm={confirmAddTask} onCancel={() => setTaskNameVisible(false)} />
       <TaskNameModal
         visible={renameModalVisible}
-        taskNumber={editingTaskId === null ? 0 : tasks.findIndex(t => t.id === editingTaskId) + 1}
+        taskNumber={editingTaskId === null ? tasks.length + 1 : tasks.findIndex(t => t.id === editingTaskId) + 1}
         initialName={editingTaskId === null ? currentTaskName : tasks.find(t => t.id === editingTaskId)?.name}
         onConfirm={confirmRename}
         onCancel={() => { setEditingTaskId(null); setRenameModalVisible(false); }}
@@ -3639,6 +3665,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         duration={duration}
         unit={unit}
         currentTaskColor={currentTaskColor}
+        activeTaskPercentComplete={activeTaskPercentComplete}
       />
       <CalendarView
         visible={calendarVisible}
