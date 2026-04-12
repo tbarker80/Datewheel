@@ -469,8 +469,7 @@ export default function Index() {
                 setMilestonesSync(file.milestones || []);
                 setStartDateSync(new Date(file.startDate));
                 setEndDateSync(new Date(file.endDate));
-                setCurrentTaskName(file.currentTaskName || 'Task 1');
-                currentTaskNameRef.current = file.currentTaskName || 'Task 1';
+                setCurrentTaskNameSync(file.currentTaskName || 'Task 1');
                 setUnit(file.unit || 'Days');
               },
             },
@@ -555,8 +554,7 @@ export default function Index() {
     setMilestonesSync(last.milestones);
     setStartDateSync(new Date(last.startDate));
     setEndDateSync(new Date(last.endDate));
-    setCurrentTaskName(last.currentTaskName);
-    currentTaskNameRef.current = last.currentTaskName;
+    setCurrentTaskNameSync(last.currentTaskName);
     await AsyncStorage.setItem("tasks", JSON.stringify(last.tasks));
     await AsyncStorage.setItem("milestones", JSON.stringify(last.milestones));
   }
@@ -1056,13 +1054,32 @@ export default function Index() {
 
   async function loadTasks() {
     try {
-      const stored = await AsyncStorage.getItem("tasks");
-      if (stored) {
-        const parsed = JSON.parse(stored);
+      const [storedTasks, storedStart, storedEnd, storedName] = await Promise.all([
+        AsyncStorage.getItem("tasks"),
+        AsyncStorage.getItem("activeStartDate"),
+        AsyncStorage.getItem("activeEndDate"),
+        AsyncStorage.getItem("activeTaskName"),
+      ]);
+      if (storedTasks) {
+        const parsed = JSON.parse(storedTasks);
         if (Array.isArray(parsed)) {
           setTasks(parsed);
           tasksRef.current = parsed;
         }
+      }
+      if (storedStart) {
+        const d = new Date(storedStart);
+        setStartDate(d);
+        startDateRef.current = d;
+      }
+      if (storedEnd) {
+        const d = new Date(storedEnd);
+        setEndDate(d);
+        endDateRef.current = d;
+      }
+      if (storedName) {
+        setCurrentTaskName(storedName);
+        currentTaskNameRef.current = storedName;
       }
     } catch (e) {
       setTasks([]);
@@ -1108,14 +1125,22 @@ export default function Index() {
     milestonesRef.current = newMilestones;
   }
 
+  function setCurrentTaskNameSync(name: string) {
+    setCurrentTaskName(name);
+    currentTaskNameRef.current = name;
+    AsyncStorage.setItem("activeTaskName", name).catch(() => {});
+  }
+
   function setStartDateSync(date: Date) {
     setStartDate(date);
     startDateRef.current = date;
+    AsyncStorage.setItem("activeStartDate", date.toISOString()).catch(() => {});
   }
 
   function setEndDateSync(date: Date) {
     setEndDate(date);
     endDateRef.current = date;
+    AsyncStorage.setItem("activeEndDate", date.toISOString()).catch(() => {});
   }
 
   // Snap end dates of stored tasks when noWeekendEnd is on.
@@ -1505,8 +1530,7 @@ export default function Index() {
               newEnd.setDate(newEnd.getDate() + 30);
               setStartDateSync(newStart);
               setEndDateSync(newEnd);
-              setCurrentTaskName('Task 1');
-              currentTaskNameRef.current = 'Task 1';
+              setCurrentTaskNameSync('Task 1');
               return;
             }
             // Pop the last stored task and make it the new active task
@@ -1515,8 +1539,7 @@ export default function Index() {
             await saveTasks(updated);
             setStartDateSync(new Date(lastTask.startDate));
             setEndDateSync(new Date(lastTask.endDate));
-            setCurrentTaskName(lastTask.name);
-            currentTaskNameRef.current = lastTask.name;
+            setCurrentTaskNameSync(lastTask.name);
             // Cancel its notification if it had one
             if (lastTask.notificationId) {
               await cancelReminder(lastTask.notificationId);
@@ -1672,8 +1695,7 @@ export default function Index() {
   await requestReviewIfAppropriate(updated.length);
 
   // The NEW active task uses the duration the user entered in the modal
-  setCurrentTaskName(name);
-  currentTaskNameRef.current = name;
+  setCurrentTaskNameSync(name);
   const newActiveStart = taskEnd;
   const newActiveEnd = new Date(newActiveStart);
   newActiveEnd.setDate(newActiveEnd.getDate() + (durationDays ?? 30));
@@ -1791,8 +1813,7 @@ export default function Index() {
 
   async function confirmRename(name: string) {
   if (editingTaskId === null) {
-    setCurrentTaskName(name);
-    currentTaskNameRef.current = name;
+    setCurrentTaskNameSync(name);
   } else {
     const task = tasksRef.current.find(t => t.id === editingTaskId);
     // Reschedule notification with updated name if reminder exists
@@ -1826,8 +1847,7 @@ export default function Index() {
           setEndDateSync(future);
           setUnit("Days");
           setUnitIndex(0);
-          setCurrentTaskName("Task 1");
-          currentTaskNameRef.current = "Task 1";
+          setCurrentTaskNameSync("Task 1");
           setMilestonesSync([]);
           await saveTasks([]);
           await AsyncStorage.removeItem("milestones");
@@ -2073,8 +2093,12 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   }
 
   async function handleSave() {
-    setSaveName(currentProjectName ?? "");
-    setSaveAsVisible(true);
+    if (currentProjectId !== null && currentProjectName) {
+      await saveProject(currentProjectName, tasksRef.current, currentTaskNameRef.current, unit, startDateRef.current, endDateRef.current, currentProjectId);
+    } else {
+      setSaveName("");
+      setSaveAsVisible(true);
+    }
   }
 
   async function handleSaveAsProject() {
@@ -2745,8 +2769,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     newEnd.setDate(newEnd.getDate() + 30);
     setStartDateSync(currentStart);
     setEndDateSync(newEnd);
-    setCurrentTaskName(template.currentTaskName);
-    currentTaskNameRef.current = template.currentTaskName;
+    setCurrentTaskNameSync(template.currentTaskName);
     setUnit(template.unit);
   }
 
@@ -2755,8 +2778,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
     saveTasks(project.tasks);
     setStartDateSync(new Date(project.startDate));
     setEndDateSync(new Date(project.endDate));
-    setCurrentTaskName(project.currentTaskName);
-    currentTaskNameRef.current = project.currentTaskName;
+    setCurrentTaskNameSync(project.currentTaskName);
     setUnit(project.unit);
     setCurrentProjectId(project.id);
     setCurrentProjectName(project.name);
