@@ -1,21 +1,23 @@
 {
   "expo": {
     "name": "Date Wheel",
+    "newArchEnabled": true,
     "slug": "DateWheel",
     "version": "1.0.29",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "datewheel",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
-      "ba ckgroundColor": "#0F1923"
+      "backgroundColor": "#0F1923"
     },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.tbarker80.DateWheel",
+      "buildNumber": "1",
       "infoPlist": {
         "CFBundleDocumentTypes": [
           {
@@ -33,7 +35,8 @@
               "public.filename-extension": ["datewheel"]
             }
           }
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -48,11 +51,7 @@
         {
           "action": "VIEW",
           "autoVerify": true,
-          "data": [
-            {
-              "scheme": "datewheel"
-            }
-          ],
+          "data": [{ "scheme": "datewheel" }],
           "category": ["BROWSABLE", "DEFAULT"]
         },
         {
