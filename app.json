@@ -17,6 +17,9 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.tbarker80.DateWheel",
       "buildNumber": "1",
+      "entitlements": {
+        "com.apple.developer.in-app-payments": []
+      },
       "infoPlist": {
         "CFBundleDocumentTypes": [
           {
