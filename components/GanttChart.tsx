@@ -95,7 +95,7 @@ export default function GanttChart({
   // Lock orientation and scroll to today when chart opens
   React.useEffect(() => {
     if (visible) {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
       if (totalMs > 0 && today >= projectStart && today <= projectEnd) {
         const todayFrac = (today.getTime() - projectStart.getTime()) / totalMs;
         setTimeout(() => {
@@ -106,7 +106,7 @@ export default function GanttChart({
         }, 450);
       }
     } else {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT).catch(() => {});
     }
   }, [visible]);
 

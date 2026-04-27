@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -54,11 +56,11 @@ export default function MilestoneModal({ visible, defaultDate, onConfirm, onCanc
       animationType="fade"
       onRequestClose={handleCancel}
     >
-      <TouchableOpacity
+      <KeyboardAvoidingView
         style={styles.overlay}
-        activeOpacity={1}
-        onPress={handleCancel}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
+        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={handleCancel}>
         <TouchableOpacity
           style={styles.box}
           activeOpacity={1}
@@ -116,7 +118,8 @@ export default function MilestoneModal({ visible, defaultDate, onConfirm, onCanc
             onCancel={() => setDatePickerVisible(false)}
           />
         </TouchableOpacity>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

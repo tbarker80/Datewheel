@@ -1,7 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-const PRO_PRODUCT_ID = 'pro_upgrade';
+import { Platform } from 'react-native';
+
+const PRO_PRODUCT_ID = Platform.OS === 'ios' ? 'DateWheelPro' : 'pro_upgrade';
 const PRO_STORAGE_KEY = 'is_pro_user';
 
 interface ProContextType {
@@ -27,7 +29,7 @@ export function useProStatus() {
 }
 
 export function ProProvider({ children }: { children: React.ReactNode }) {
-  const [isPro, setIsPro] = useState(true);
+  const [isPro, setIsPro] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [price, setPrice] = useState('$2.99');
 

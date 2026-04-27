@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -73,11 +75,11 @@ export default function TaskNameModal({
       animationType="fade"
       onRequestClose={handleCancel}
     >
-      <TouchableOpacity
+      <KeyboardAvoidingView
         style={styles.overlay}
-        activeOpacity={1}
-        onPress={handleCancel}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
+        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={handleCancel}>
         <TouchableOpacity style={styles.box} activeOpacity={1} onPress={() => {}}>
           <Text style={styles.title}>NAME THIS TASK</Text>
           <Text style={styles.sub}>
@@ -132,7 +134,8 @@ export default function TaskNameModal({
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
@@ -286,6 +286,9 @@ export default function DateWheel({
   const panStartPanRef = React.useRef({ x: 0, y: 0 });
   const angleToDayRef = React.useRef<number | null>(null);
   const dragTaskStartDayRef = React.useRef<number | null>(null);
+  // Stores SVG-space coords when a pan fires but no actual drag occurred.
+  // handleDragEnd reads this to dispatch the correct tap action.
+  const pendingTapRef = React.useRef<{ x: number; y: number; zone: 'center' | 'ring' } | null>(null);
   const [activeDot, setActiveDot] = React.useState<'start' | 'end' | number | null>(null);
 
   function dist(ax: number, ay: number, bx: number, by: number) {
@@ -321,6 +324,7 @@ export default function DateWheel({
   // ─── Drag handlers ────────────────────────────────────────────────────────
 
   function handleDragStart(touchX: number, touchY: number) {
+    pendingTapRef.current = null;
     const { x, y } = toSvg(touchX, touchY);
     const dx = x - R;
     const dy = y - R;
@@ -353,7 +357,7 @@ export default function DateWheel({
     });
 
     const minDist = Math.min(distToStart, distToEnd, closestBoundaryDist);
-    const ACTIVATION_RADIUS = 44;
+    const ACTIVATION_RADIUS = Platform.OS === 'ios' ? 28 : 44;
 
     if (minDist <= ACTIVATION_RADIUS) {
       // Close to a dot — dot drag
@@ -385,6 +389,15 @@ export default function DateWheel({
     } else {
       isDraggingRef.current = false;
       isPanningViewRef.current = false;
+      // Center area at scale 1 — pan stole the touch, record position so
+      // handleDragEnd can dispatch the correct center tap action.
+      if (physicalScaleRef.current === 1) {
+        if (distance < RING_RADIUS - 20) {
+          pendingTapRef.current = { x, y, zone: 'center' };
+        } else if (distance >= RING_RADIUS - 20 && distance <= RING_RADIUS + 20) {
+          pendingTapRef.current = { x, y, zone: 'ring' };
+        }
+      }
     }
   }
 
@@ -461,6 +474,35 @@ export default function DateWheel({
     setActiveDot(null);
     onDragActive(false);
     onDragEnd();
+    // If the pan intercepted a tap (no actual drag occurred), dispatch now.
+    if (pendingTapRef.current) {
+      const tap = pendingTapRef.current;
+      pendingTapRef.current = null;
+      if (tap.zone === 'center') {
+        if (tap.y < R + 5) {
+          onDurationTap();
+        } else {
+          onUnitToggle();
+        }
+      } else if (tap.zone === 'ring') {
+        const dx = tap.x - R;
+        const dy = tap.y - R;
+        let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+        if (angle < 0) angle += 360;
+        const tappedDay = Math.round((angle / 360) * TOTAL_DAYS);
+        let tapped = false;
+        for (const task of tasks) {
+          const tStartDay = getDayOfYear(new Date(task.startDate));
+          const tEndDay = getDayOfYear(new Date(task.endDate));
+          if (tappedDay >= tStartDay && tappedDay <= tEndDay) {
+            onTaskTap(highlightedTaskId === task.id ? null : task.id);
+            tapped = true;
+            break;
+          }
+        }
+        if (!tapped) onTaskTap(null);
+      }
+    }
   }
 
   function handleTap(touchX: number, touchY: number) {
@@ -479,7 +521,6 @@ export default function DateWheel({
         }
       }
     }
-
 
     if (distance > RING_RADIUS + 20) { onTaskTap(null); return; }
     if (distance < RING_RADIUS - 20) { return; }
@@ -520,7 +561,7 @@ export default function DateWheel({
 
   const panGesture = Gesture.Pan()
     .activateAfterLongPress(0)
-    .minDistance(2)
+    .minDistance(Platform.OS === 'ios' ? 8 : 2)
     .onStart((e) => { runOnJS(handleDragStart)(e.x, e.y); })
     .onUpdate((e) => { runOnJS(handleDragUpdate)(e.x, e.y); })
     .onEnd(() => { runOnJS(handleDragEnd)(); })
@@ -789,14 +830,16 @@ export default function DateWheel({
             {tasks.length > 0 && (
               <Text style={styles.centerTaskCount}>{tasks.length + 1} Tasks</Text>
             )}
-            <TouchableOpacity onPress={onDurationTap} hitSlop={{ top: 10, bottom: 10, left: 20, right: 20 }}>
+            <View>
               <Text style={styles.centerDuration}>
                 {highlightedTaskId !== null ? highlightedTaskDuration : duration}
               </Text>
-            </TouchableOpacity>
-            <Text style={styles.centerUnit} onPress={onUnitToggle}>
-              {unit.toUpperCase()} ▾
-            </Text>
+            </View>
+            <View>
+              <Text style={styles.centerUnit}>
+                {unit.toUpperCase()} ▾
+              </Text>
+            </View>
             {tasks.length > 0 && totalDuration !== "" && (
               <>
                 <Text style={styles.centerDurationTotal}>{totalDuration}</Text>

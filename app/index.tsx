@@ -18,7 +18,7 @@ import TaskEditModal, { TaskEditValues } from "@/components/TaskEditModal";
 import TaskNameModal from "@/components/TaskNameModal";
 import TemplatesModal, { Project, saveTemplate, Template } from "@/components/TemplatesModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from "expo-haptics";
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -3914,8 +3914,10 @@ zoomResetText: {
   },
 
   toolbarIcon: {
-  fontSize: 14,
-},
+    fontSize: 14,
+    textAlign: 'center',
+    alignSelf: 'center',
+  },
   toolbarLabel: {
     fontSize: 9,
     fontWeight: '600',
@@ -3938,8 +3940,8 @@ zoomResetText: {
   dateFieldInner: { flex: 1, alignItems: "center", paddingVertical: 5 },
   dateStepBtn: { paddingHorizontal: 10, alignSelf: "stretch", justifyContent: "center", alignItems: "center" },
   dateStepText: { fontSize: 18, fontWeight: "300" },
-  fieldLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 1.2, marginBottom: 2 },
-  fieldValue: { fontSize: 12, fontWeight: "600" },
+  fieldLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 1.2, marginBottom: 2 },
+  fieldValue: { fontSize: 14, fontWeight: "600" },
   fieldDay: { fontSize: 10, marginTop: 1 },
   taskDateRow: { flexDirection: "row", width: "100%", borderRadius: 12, marginBottom: 8, overflow: "hidden" },
   taskDateField: { flex: 1, flexDirection: "row", alignItems: "center" },
