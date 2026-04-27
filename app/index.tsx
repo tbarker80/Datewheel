@@ -39,7 +39,7 @@ import {
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import ReanimatedSwipeable, { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, NativeViewGestureHandler } from 'react-native-gesture-handler';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path as SvgPath } from 'react-native-svg';
@@ -315,12 +315,14 @@ function SwipeableTaskRow({
   onEdit,
   onProgress,
   disabled,
+  scrollRef,
 }: {
   children: React.ReactNode;
   onDelete: () => void;
   onEdit: () => void;
   onProgress: () => void;
   disabled?: boolean;
+  scrollRef?: React.RefObject<NativeViewGestureHandler | null>;
 }) {
   const ref = useRef<SwipeableMethods>(null);
   const close = () => ref.current?.close();
@@ -333,6 +335,7 @@ function SwipeableTaskRow({
       friction={2}
       overshootRight={false}
       overshootLeft={false}
+      simultaneousHandlers={scrollRef}
       renderRightActions={() => (
         <SwipeDeleteAction onDelete={() => { close(); onDelete(); }} />
       )}
@@ -413,7 +416,7 @@ export default function Index() {
 
   const tasksRef = useRef<Task[]>([]);
   const startDateRef = useRef<Date>(today);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<NativeViewGestureHandler>(null);
   const endDateRef = useRef<Date>(future);
   const taskSnapshotRef = useRef<Task[]>([]);
   const activeStartSnapshotRef = useRef<string>("");
@@ -2789,6 +2792,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
   return (
     <View style={[styles.safeArea, { backgroundColor: theme.bg, paddingTop: Math.max(0, insets.top - 15) }]}>
       <StatusBar barStyle={settings.darkMode ? "light-content" : "dark-content"} backgroundColor={theme.bg} />
+      <NativeViewGestureHandler ref={scrollViewRef}>
       <ScrollView
   style={styles.scroll}
   contentContainerStyle={[styles.container, { paddingBottom: insets.bottom + 80 }]}
@@ -3326,6 +3330,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
             <SwipeableTaskRow
               key={item.id}
               disabled={isLocked}
+              scrollRef={scrollViewRef}
               onDelete={() => {
                 if (item.isActive) {
                   Alert.alert('Delete', 'Remove the active task?', [
@@ -3524,6 +3529,7 @@ if (conflictIndex2 !== undefined && lagDays2 !== undefined) {
         />
 
       </ScrollView>
+      </NativeViewGestureHandler>
 
       <SettingsModal
         visible={settingsVisible}
