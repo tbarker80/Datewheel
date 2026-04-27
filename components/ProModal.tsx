@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Modal,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useProStatus } from './ProContext';
 
@@ -161,9 +162,11 @@ export default function ProModal({ visible, onClose, onSuccess }: Props) {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.legalText}>
-            Payment processed by Google Play. No recurring charges.
-          </Text>
+          <Text>
+  {Platform.OS === 'ios' 
+    ? 'Payment processed by Apple. No recurring charges.' 
+    : 'Payment processed by Google Play. No recurring charges.'}
+</Text>
 
         </View>
       </View>

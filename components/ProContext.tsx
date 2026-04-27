@@ -96,7 +96,14 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
   async function purchasePro() {
     try {
       const iap = await import('react-native-iap');
-      await iap.requestPurchase({ skus: [PRO_PRODUCT_ID] } as any);
+      if (Platform.OS === 'ios') {
+  await iap.requestPurchase({ 
+    sku: PRO_PRODUCT_ID,
+    andDangerouslyFinishTransactionAutomaticallyIOS: false 
+  } as any);
+} else {
+  await iap.requestPurchase({ skus: [PRO_PRODUCT_ID] } as any);
+}
       // Purchase completion is handled by purchaseUpdatedListener above
     } catch (e: any) {
       if (e?.code === 'E_USER_CANCELLED') return;
