@@ -5,6 +5,16 @@ import { Platform } from 'react-native';
 const PRO_PRODUCT_ID = Platform.OS === 'ios' ? 'DateWheelPro' : 'pro_upgrade';
 const PRO_STORAGE_KEY = 'is_pro_user';
 
+function isPurchaseValid(purchase: any): boolean {
+  return purchase?.purchaseState === 'purchased' && !!purchase?.purchaseToken;
+}
+
+function isIapUnavailable(e: any): boolean {
+  const code = e?.code ?? '';
+  const msg = e?.message ?? '';
+  return code === 'iap-not-available' || msg.includes('iap-not-available') || msg.includes('NitroModules');
+}
+
 interface ProContextType {
   isPro: boolean;
   isLoading: boolean;
@@ -38,10 +48,9 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
     loadProStatus();
     setupIAP();
     return () => {
-      // Clean up listeners on unmount
       purchaseListenerRef.current?.remove();
       errorListenerRef.current?.remove();
-      import('react-native-iap').then(iap => {
+      import('expo-iap').then(iap => {
         iap.endConnection().catch(() => {});
       });
     };
@@ -59,15 +68,13 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
 
   async function setupIAP() {
     try {
-      const iap = await import('react-native-iap');
+      const iap = await import('expo-iap');
       await iap.initConnection();
 
       // Purchase update listener — required for iOS to complete transactions
       purchaseListenerRef.current = iap.purchaseUpdatedListener(async (purchase: any) => {
-        const receipt = purchase.transactionReceipt;
-        if (receipt) {
+        if (isPurchaseValid(purchase)) {
           await grantPro();
-          // Finish the transaction — required on iOS
           await iap.finishTransaction({ purchase, isConsumable: false });
         }
       });
@@ -81,7 +88,7 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
       const products = await iap.fetchProducts({ skus: [PRO_PRODUCT_ID] });
       if (products && products.length > 0) {
         const p = products[0] as any;
-        setPrice(p.localizedPrice || '$2.99');
+        setPrice(p.localizedPrice || p.formattedPrice || '$2.99');
       }
     } catch (e: any) {
       console.log('IAP not available:', e?.message);
@@ -95,20 +102,18 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
 
   async function purchasePro() {
     try {
-      const iap = await import('react-native-iap');
-      if (Platform.OS === 'ios') {
-  await iap.requestPurchase({ 
-    sku: PRO_PRODUCT_ID,
-    andDangerouslyFinishTransactionAutomaticallyIOS: false 
-  } as any);
-} else {
-  await iap.requestPurchase({ skus: [PRO_PRODUCT_ID] } as any);
-}
+      const iap = await import('expo-iap');
+      await iap.requestPurchase({
+        type: 'in-app',
+        request: Platform.OS === 'ios'
+          ? { apple: { sku: PRO_PRODUCT_ID } }
+          : { google: { skus: [PRO_PRODUCT_ID] } },
+      });
       // Purchase completion is handled by purchaseUpdatedListener above
     } catch (e: any) {
-      if (e?.code === 'E_USER_CANCELLED') return;
-      // Only grant Pro in Expo Go for UI testing
-      if (e?.message?.includes('NitroModules')) {
+      if (e?.code === 'user-cancelled') return;
+      // Expo Go / simulator: IAP module unavailable, grant Pro for UI testing
+      if (isIapUnavailable(e)) {
         await grantPro();
         return;
       }
@@ -118,7 +123,7 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
 
   async function restorePurchase() {
     try {
-      const iap = await import('react-native-iap');
+      const iap = await import('expo-iap');
       const purchases = await iap.getAvailablePurchases();
       const proPurchase = purchases.find((p: any) => p.productId === PRO_PRODUCT_ID);
       if (proPurchase) {
@@ -127,7 +132,8 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
       }
       throw new Error('No Pro purchase found');
     } catch (e: any) {
-      if (e?.message?.includes('NitroModules')) {
+      if (e?.message === 'No Pro purchase found') throw e;
+      if (isIapUnavailable(e)) {
         throw new Error('Purchase restore not available in Expo Go');
       }
       throw e;
@@ -139,14 +145,7 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <ProContext.Provider value={{
-      isPro,
-      isLoading,
-      purchasePro,
-      restorePurchase,
-      grantProAlreadyPaid,
-      price,
-    }}>
+    <ProContext.Provider value={{ isPro, isLoading, purchasePro, restorePurchase, grantProAlreadyPaid, price }}>
       {children}
     </ProContext.Provider>
   );

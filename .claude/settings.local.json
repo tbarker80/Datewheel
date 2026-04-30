@@ -9,7 +9,12 @@
       "Bash(node scripts/generate-icon.js)",
       "Bash(node -e \"require\\('@react-native-community/slider'\\)\")",
       "Bash(npx tsc:*)",
-      "Bash(node -e \"const m = require\\('d:/apps/dw/DateWheel/node_modules/expo-file-system'\\); console.log\\(Object.keys\\(m\\).filter\\(k => k.toLowerCase\\(\\).includes\\('cache'\\) || k.toLowerCase\\(\\).includes\\('encoding'\\) || k.toLowerCase\\(\\).includes\\('document'\\)\\).join\\('\\\\n'\\)\\);\")"
+      "Bash(node -e \"const m = require\\('d:/apps/dw/DateWheel/node_modules/expo-file-system'\\); console.log\\(Object.keys\\(m\\).filter\\(k => k.toLowerCase\\(\\).includes\\('cache'\\) || k.toLowerCase\\(\\).includes\\('encoding'\\) || k.toLowerCase\\(\\).includes\\('document'\\)\\).join\\('\\\\n'\\)\\);\")",
+      "Bash(node -e \"const m = require\\('react-native-purchases-ui'\\); console.log\\(Object.keys\\(m\\)\\)\")",
+      "Bash(npm uninstall *)",
+      "Bash(npx expo *)",
+      "Bash(grep -v \"^--$\")",
+      "Bash(grep -v \"//\")"
     ]
   }
 }
