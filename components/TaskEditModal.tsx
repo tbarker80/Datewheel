@@ -192,6 +192,9 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 40,
     maxHeight: '88%',
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
   },
   sectionLabel: {
     fontSize: 11,

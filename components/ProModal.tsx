@@ -187,6 +187,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: '#2E7DBC',
     paddingBottom: 40,
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
   },
   header: {
     padding: 20,

@@ -147,7 +147,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   box: {
-    width: '85%',
+    width: '92%',
+    maxWidth: 480,
     backgroundColor: '#1C2B38',
     borderRadius: 20,
     padding: 8,

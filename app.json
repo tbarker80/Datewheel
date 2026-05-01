@@ -3,7 +3,7 @@
     "name": "Date Wheel",
     "newArchEnabled": true,
     "slug": "DateWheel",
-    "version": "1.0.33",
+    "version": "1.0.34",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "datewheel",
@@ -47,7 +47,7 @@
         "backgroundColor": "#0F1923"
       },
       "package": "com.tbarker80.DateWheel",
-      "versionCode": 33,
+      "versionCode": 34,
       "permissions": ["com.android.vending.BILLING"],
       "intentFilters": [
         {

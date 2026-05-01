@@ -2,6 +2,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import React, { useRef, useState } from 'react';
 import {
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +12,8 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Milestone, Task } from './datewheel';
+
+const IS_IPAD = Platform.OS === 'ios' && !!(Platform as any).isPad;
 
 const ROW_HEIGHT = 56;
 const LABEL_WIDTH = 130;
@@ -92,20 +95,11 @@ export default function GanttChart({
   const totalMs = projectEnd.getTime() - projectStart.getTime();
   const today = new Date();
 
-  // Lock orientation and scroll to today when chart opens
+  // Restore portrait when the chart closes (iPhone only — iPad handles both orientations).
+  // Landscape lock is deferred to onShow (below) so it never races with the
+  // Modal's slide-in animation on iOS, which is the crash trigger.
   React.useEffect(() => {
-    if (visible) {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
-      if (totalMs > 0 && today >= projectStart && today <= projectEnd) {
-        const todayFrac = (today.getTime() - projectStart.getTime()) / totalMs;
-        setTimeout(() => {
-          horizontalScrollRef.current?.scrollTo({
-            x: Math.max(0, todayFrac * barArea - screenWidth / 3),
-            animated: true,
-          });
-        }, 450);
-      }
-    } else {
+    if (!visible && !IS_IPAD) {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT).catch(() => {});
     }
   }, [visible]);
@@ -175,7 +169,27 @@ export default function GanttChart({
   const atMax = zoom >= MAX_ZOOM;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+      onShow={() => {
+        // Safe to lock orientation here — the slide animation has fully completed.
+        // iPad is large enough in either orientation so we leave it alone.
+        if (!IS_IPAD) {
+          ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+        }
+        if (totalMs > 0 && today >= projectStart && today <= projectEnd) {
+          const todayFrac = (today.getTime() - projectStart.getTime()) / totalMs;
+          setTimeout(() => {
+            horizontalScrollRef.current?.scrollTo({
+              x: Math.max(0, todayFrac * barArea - screenWidth / 3),
+              animated: true,
+            });
+          }, 100);
+        }
+      }}
+    >
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.container}>
 
