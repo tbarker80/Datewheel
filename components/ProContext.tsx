@@ -1,5 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import {
+  getAvailablePurchases as getAvailablePurchasesRoot,
+  restorePurchases as restorePurchasesRoot,
+  useIAP,
+} from 'expo-iap';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 
 const PRO_PRODUCT_ID = Platform.OS === 'ios' ? 'DateWheelPro' : 'pro_upgrade';
@@ -41,20 +46,41 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
   const [isPro, setIsPro] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [price, setPrice] = useState('$2.99');
-  const purchaseListenerRef = useRef<any>(null);
-  const errorListenerRef = useRef<any>(null);
+
+  const { connected, products, fetchProducts, requestPurchase, finishTransaction } = useIAP({
+    onPurchaseSuccess: async (purchase) => {
+      if (isPurchaseValid(purchase)) {
+        await grantPro();
+        try {
+          await finishTransaction({ purchase, isConsumable: false });
+        } catch (e) {
+          console.warn('finishTransaction error:', e);
+        }
+      }
+    },
+    onPurchaseError: (error) => {
+      console.warn('Purchase error:', error);
+    },
+  });
 
   useEffect(() => {
     loadProStatus();
-    setupIAP();
-    return () => {
-      purchaseListenerRef.current?.remove();
-      errorListenerRef.current?.remove();
-      import('expo-iap').then(iap => {
-        iap.endConnection().catch(() => {});
-      });
-    };
   }, []);
+
+  useEffect(() => {
+    if (connected) {
+      fetchProducts({ skus: [PRO_PRODUCT_ID] }).catch(e => {
+        console.log('fetchProducts failed:', e?.message);
+      });
+    }
+  }, [connected]);
+
+  useEffect(() => {
+    if (products.length > 0) {
+      const p = products[0] as any;
+      setPrice(p.localizedPrice || p.formattedPrice || '$2.99');
+    }
+  }, [products]);
 
   async function loadProStatus() {
     try {
@@ -66,35 +92,6 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false);
   }
 
-  async function setupIAP() {
-    try {
-      const iap = await import('expo-iap');
-      await iap.initConnection();
-
-      // Purchase update listener — required for iOS to complete transactions
-      purchaseListenerRef.current = iap.purchaseUpdatedListener(async (purchase: any) => {
-        if (isPurchaseValid(purchase)) {
-          await grantPro();
-          await iap.finishTransaction({ purchase, isConsumable: false });
-        }
-      });
-
-      // Purchase error listener
-      errorListenerRef.current = iap.purchaseErrorListener((error: any) => {
-        console.warn('Purchase error:', error);
-      });
-
-      // Fetch product price
-      const products = await iap.fetchProducts({ skus: [PRO_PRODUCT_ID] });
-      if (products && products.length > 0) {
-        const p = products[0] as any;
-        setPrice(p.localizedPrice || p.formattedPrice || '$2.99');
-      }
-    } catch (e: any) {
-      console.log('IAP not available:', e?.message);
-    }
-  }
-
   async function grantPro() {
     setIsPro(true);
     await AsyncStorage.setItem(PRO_STORAGE_KEY, 'true');
@@ -102,17 +99,15 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
 
   async function purchasePro() {
     try {
-      const iap = await import('expo-iap');
-      await iap.requestPurchase({
+      await requestPurchase({
         type: 'in-app',
         request: Platform.OS === 'ios'
           ? { apple: { sku: PRO_PRODUCT_ID } }
           : { google: { skus: [PRO_PRODUCT_ID] } },
       });
-      // Purchase completion is handled by purchaseUpdatedListener above
+      // Completion handled by onPurchaseSuccess
     } catch (e: any) {
       if (e?.code === 'user-cancelled') return;
-      // Expo Go / simulator: IAP module unavailable, grant Pro for UI testing
       if (isIapUnavailable(e)) {
         await grantPro();
         return;
@@ -123,8 +118,9 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
 
   async function restorePurchase() {
     try {
-      const iap = await import('expo-iap');
-      const purchases = await iap.getAvailablePurchases();
+      // Sync with store (triggers iOS receipt refresh); root API is value-returning
+      await restorePurchasesRoot();
+      const purchases = (await getAvailablePurchasesRoot()) as any[];
       const proPurchase = purchases.find((p: any) => p.productId === PRO_PRODUCT_ID);
       if (proPurchase) {
         await grantPro();
