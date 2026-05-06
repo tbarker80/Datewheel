@@ -7,7 +7,7 @@ import {
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 
-const PRO_PRODUCT_ID = Platform.OS === 'ios' ? 'DateWheelPro' : 'pro_upgrade';
+const PRO_PRODUCT_ID = Platform.OS === 'ios' ? 'com.tbarker80.DateWheel.pro' : 'pro_upgrade';
 const PRO_STORAGE_KEY = 'is_pro_user';
 
 function isPurchaseValid(purchase: any): boolean {
